@@ -9,8 +9,8 @@ use crate::theme::{
 use crate::types::{Action, SortMode, Tab, ViewMode};
 use crate::ui::components::{icon_square_button, sidebar_item, trunc, Icon};
 use eframe::egui::{
-    self, vec2, Align, Align2, Color32, ColorImage, CornerRadius, Id, Key, Layout, Margin,
-    RichText, Sense, Stroke, TextureHandle, TextureOptions,
+    self, vec2, Align, Align2, Color32, ColorImage, CornerRadius, FontId, Id, Key, Layout, Margin,
+    Rect, RichText, Sense, Stroke, TextureHandle, TextureOptions,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -53,8 +53,9 @@ pub struct Launcher {
     pub(crate) rpc_status: RpcStatus,
     pub(crate) active_game: Option<(String, Instant)>,
 
-    // Panneau latéral de détails / édition d'un jeu
+    // Panneau latéral / Modale de propriétés d'un jeu
     pub(crate) selected_game_id: Option<String>,
+    pub(crate) properties_tab: usize,
     pub(crate) show_discord_guide: bool,
     pub(crate) new_tag_input: String,
 
@@ -113,6 +114,7 @@ impl Launcher {
             rpc_status: RpcStatus::Connecting,
             active_game: None,
             selected_game_id: None,
+            properties_tab: 0,
             show_discord_guide: false,
             new_tag_input: String::new(),
             spotlight_open: false,
@@ -590,6 +592,159 @@ impl Launcher {
             }
         }
     }
+
+    // ───────────────────────────── Bandeau Titre Riot Style (Frameless) ─────────────────────────────
+    pub fn render_riot_title_bar(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        let th = self.theme();
+        let accent = self.accent();
+
+        egui::Panel::top("riot_title_bar")
+            .exact_size(38.0)
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(th.panel)
+                    .stroke(Stroke::new(1.0, th.panel_border))
+                    .inner_margin(Margin::ZERO),
+            )
+            .show(ui, |ui| {
+                let bar_rect = ui.max_rect();
+
+                // Déplacement de la fenêtre par glisser-déposer sur toute la barre
+                let drag_resp = ui.interact(
+                    bar_rect,
+                    Id::unique("riot_titlebar_drag"),
+                    Sense::click_and_drag(),
+                );
+                if drag_resp.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if drag_resp.double_clicked() {
+                    let is_max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_max));
+                }
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+
+                    // ── Gauche : Logo + Titre ──
+                    ui.add_space(14.0);
+                    let (icon_r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+                    let p = ui.painter();
+                    p.rect_filled(icon_r, CornerRadius::same(5), accent);
+                    let c = icon_r.center();
+                    let st = Stroke::new(1.8, WHITE);
+                    p.line_segment([c + vec2(-3.5, -4.0), c + vec2(-3.5, 1.5)], st);
+                    p.line_segment([c + vec2(3.5, -4.0), c + vec2(3.5, 1.5)], st);
+                    p.line_segment([c + vec2(-3.0, 3.5), c + vec2(3.0, 3.5)], st);
+
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("UniLauncher").size(13.5).strong().color(WHITE));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Client").size(11.5).color(DIM));
+
+                    // ── Centre : Raccourci recherche discret ──
+                    let total_w = ui.available_width();
+                    if total_w > 420.0 {
+                        ui.add_space(total_w * 0.18);
+                        let (search_pill, pill_resp) = ui.allocate_exact_size(vec2(230.0, 26.0), Sense::click());
+                        let hov = pill_resp.hovered();
+                        ui.painter().rect_filled(
+                            search_pill,
+                            CornerRadius::same(13),
+                            if hov { th.card_hover } else { th.card },
+                        );
+                        ui.painter().rect_stroke(
+                            search_pill,
+                            CornerRadius::same(13),
+                            Stroke::new(1.0, if hov { accent.gamma_multiply(0.6) } else { th.card_border }),
+                            egui::StrokeKind::Inside,
+                        );
+                        let p = ui.painter();
+                        p.text(
+                            search_pill.center(),
+                            Align2::CENTER_CENTER,
+                            "🔍 Rechercher (Alt + Espace)",
+                            FontId::proportional(11.5),
+                            if hov { WHITE } else { DIM },
+                        );
+                        if pill_resp.clicked() {
+                            self.spotlight_open = true;
+                            self.spotlight_focus_needed = true;
+                            self.spotlight_query.clear();
+                        }
+                    }
+
+                    // ── Droite : Boutons de contrôle de fenêtre Riot Style ──
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        // 1. Bouton Fermer (✕) - Devient ROUGE vif au survol
+                        let (close_rect, close_resp) = ui.allocate_exact_size(vec2(48.0, 38.0), Sense::click());
+                        let close_hov = close_resp.hovered();
+                        if close_hov {
+                            ui.painter().rect_filled(close_rect, CornerRadius::ZERO, Color32::from_rgb(232, 17, 35));
+                        }
+                        let close_col = if close_hov { WHITE } else { DIM };
+                        let c = close_rect.center();
+                        let st = Stroke::new(1.3, close_col);
+                        ui.painter().line_segment([c + vec2(-4.5, -4.5), c + vec2(4.5, 4.5)], st);
+                        ui.painter().line_segment([c + vec2(4.5, -4.5), c + vec2(-4.5, 4.5)], st);
+                        if close_resp.clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+
+                        // 2. Bouton Maximiser / Restaurer (□ / ❐)
+                        let is_max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                        let (max_rect, max_resp) = ui.allocate_exact_size(vec2(44.0, 38.0), Sense::click());
+                        let max_hov = max_resp.hovered();
+                        if max_hov {
+                            ui.painter().rect_filled(max_rect, CornerRadius::ZERO, th.card_hover);
+                        }
+                        let max_col = if max_hov { WHITE } else { DIM };
+                        let c = max_rect.center();
+                        if is_max {
+                            ui.painter().rect_stroke(
+                                Rect::from_center_size(c + vec2(-2.0, 2.0), vec2(8.0, 8.0)),
+                                CornerRadius::ZERO,
+                                Stroke::new(1.2, max_col),
+                                egui::StrokeKind::Inside,
+                            );
+                            ui.painter().rect_stroke(
+                                Rect::from_center_size(c + vec2(2.0, -2.0), vec2(8.0, 8.0)),
+                                CornerRadius::ZERO,
+                                Stroke::new(1.2, max_col),
+                                egui::StrokeKind::Inside,
+                            );
+                        } else {
+                            ui.painter().rect_stroke(
+                                Rect::from_center_size(c, vec2(10.0, 10.0)),
+                                CornerRadius::ZERO,
+                                Stroke::new(1.2, max_col),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        if max_resp.clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_max));
+                        }
+
+                        // 3. Bouton Minimiser (—)
+                        let (min_rect, min_resp) = ui.allocate_exact_size(vec2(44.0, 38.0), Sense::click());
+                        let min_hov = min_resp.hovered();
+                        if min_hov {
+                            ui.painter().rect_filled(min_rect, CornerRadius::ZERO, th.card_hover);
+                        }
+                        let min_col = if min_hov { WHITE } else { DIM };
+                        let c = min_rect.center();
+                        ui.painter().line_segment(
+                            [c + vec2(-5.0, 0.0), c + vec2(5.0, 0.0)],
+                            Stroke::new(1.4, min_col),
+                        );
+                        if min_resp.clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                    });
+                });
+            });
+    }
 }
 
 // ───────────────────────────── Boucle Principale eframe::App ─────────────────────────────
@@ -700,6 +855,9 @@ impl eframe::App for Launcher {
             }
             return;
         }
+
+        // ── Bandeau Titre Riot Games Style (Frameless) ──
+        self.render_riot_title_bar(&ctx, ui);
 
         let compact = self.settings.compact_sidebar;
         let sidebar_width = if compact { 72.0 } else { 232.0 };
@@ -990,8 +1148,7 @@ impl eframe::App for Launcher {
                     });
             });
 
-        // ── Panneau de détails à droite (si un jeu est inspecté) ──
-        let mut actions = self.details_drawer_ui(ui);
+        let mut actions = vec![];
 
         // ── Contenu Central ──
         egui::CentralPanel::default()
@@ -1013,6 +1170,11 @@ impl eframe::App for Launcher {
                     actions.extend(self.library_ui(ui));
                 }
             });
+
+        // ── Modale de Propriétés Réactive (Style Riot / Steam) ──
+        if self.selected_game_id.is_some() {
+            actions.extend(self.properties_modal_ui(&ctx));
+        }
 
         for a in actions {
             self.apply(&ctx, a);

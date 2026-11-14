@@ -3,6 +3,7 @@ pub mod components;
 pub mod deals;
 pub mod emulators;
 pub mod library;
+pub mod properties;
 pub mod settings;
 pub mod spotlight;
 pub mod stats;

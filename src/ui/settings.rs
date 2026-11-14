@@ -4,7 +4,7 @@ use crate::discord::{RpcEvent, RpcStatus};
 use crate::process::open_uri;
 use crate::theme::{ACCENTS, DIM, GOLD, GREEN, RED, STEAM_C, WHITE};
 use crate::ui::components::{modern_action_button, row, section, toggle, Icon};
-use eframe::egui::{self, vec2, Id, Margin, RichText, Sense, Stroke, Ui};
+use eframe::egui::{self, vec2, Align, Id, Layout, Margin, RichText, Sense, Stroke, Ui};
 
 impl Launcher {
     // ───────────────────── Vue Paramètres ─────────────────────
@@ -28,26 +28,88 @@ impl Launcher {
             .id_salt("settings_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                section(ui, "Thème & Ambiance Visuelle", th, |ui| {
-                    ui.label(RichText::new("Palette d'ambiance de l'interface").size(13.0).color(WHITE));
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        for (idx, name) in [
-                            (0, "Obsidian Zinc"),
-                            (1, "OLED Noir Pur"),
-                            (2, "Cyberpunk Néon"),
-                            (3, "Midnight Blue"),
-                        ] {
-                            let sel = self.settings.theme == idx;
-                            let bg = if sel { accent.gamma_multiply(0.25) } else { th.card };
-                            let fg = if sel { WHITE } else { DIM };
-                            let btn = egui::Button::new(RichText::new(name).size(12.0).color(fg))
+                section(ui, "Thème & Ambiance Visuelle (8 Thèmes)", th, |ui| {
+                    ui.label(RichText::new("Palette d'ambiance de l'interface").size(13.5).strong().color(WHITE));
+                    ui.add_space(2.0);
+                    ui.label(RichText::new("Choisissez parmi 8 thèmes ultra-modernes avec contrastes optimisés").size(11.5).color(DIM));
+                    ui.add_space(10.0);
+
+                    // Grille des 8 thèmes
+                    ui.columns(2, |cols| {
+                        for idx in 0..8 {
+                            let col = &mut cols[idx % 2];
+                            let theme_meta = crate::theme::get_theme(idx);
+                            let name = crate::theme::THEME_NAMES[idx];
+                            let is_sel = self.settings.theme == idx;
+
+                            let bg = if is_sel { accent.gamma_multiply(0.2) } else { theme_meta.card };
+                            let border_col = if is_sel { accent } else { theme_meta.card_border };
+
+                            egui::Frame::new()
                                 .fill(bg)
-                                .stroke(Stroke::new(1.0, if sel { accent } else { th.card_border }))
-                                .corner_radius(7.0);
-                            if ui.add(btn).clicked() {
-                                self.settings.theme = idx;
+                                .stroke(Stroke::new(if is_sel { 1.5 } else { 1.0 }, border_col))
+                                .corner_radius(10.0)
+                                .inner_margin(Margin::symmetric(14, 10))
+                                .show(col, |ui| {
+                                    let resp = ui.interact(ui.max_rect(), Id::unique(("th_pick", idx)), Sense::click());
+                                    if resp.clicked() {
+                                        self.settings.theme = idx;
+                                        changed = true;
+                                    }
+
+                                    ui.horizontal(|ui| {
+                                        // Pastilles de preview de la palette du thème
+                                        let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                                        ui.painter().circle_filled(r.center(), 6.0, theme_meta.bg);
+                                        ui.painter().circle_stroke(r.center(), 6.5, Stroke::new(1.0, theme_meta.card_border));
+
+                                        let (r2, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                                        ui.painter().circle_filled(r2.center(), 6.0, theme_meta.card);
+                                        ui.painter().circle_stroke(r2.center(), 6.5, Stroke::new(1.0, theme_meta.card_border));
+
+                                        ui.add_space(4.0);
+                                        ui.label(
+                                            RichText::new(name)
+                                                .size(13.0)
+                                                .strong()
+                                                .color(if is_sel { WHITE } else { DIM }),
+                                        );
+
+                                        if is_sel {
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                ui.label(RichText::new("✓ Actif").size(11.5).strong().color(accent));
+                                            });
+                                        }
+                                    });
+                                });
+
+                            col.add_space(6.0);
+                        }
+                    });
+
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("Couleur d'accentuation dynamique").size(13.5).strong().color(WHITE));
+                    ui.add_space(2.0);
+                    ui.label(RichText::new("Personnalise la couleur des halos, boutons et indicateurs d'action").size(11.5).color(DIM));
+                    ui.add_space(10.0);
+
+                    ui.horizontal(|ui| {
+                        for (idx, &acc_col) in ACCENTS.iter().enumerate() {
+                            let is_sel = self.settings.accent == idx;
+                            let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+                            if resp.clicked() {
+                                self.settings.accent = idx;
                                 changed = true;
+                            }
+                            if resp.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            let p = ui.painter();
+                            p.circle_filled(rect.center(), if is_sel { 13.0 } else { 11.0 }, acc_col);
+                            if is_sel {
+                                p.circle_stroke(rect.center(), 15.0, Stroke::new(2.0, WHITE));
+                            } else if resp.hovered() {
+                                p.circle_stroke(rect.center(), 14.0, Stroke::new(1.5, WHITE.gamma_multiply(0.5)));
                             }
                         }
                     });

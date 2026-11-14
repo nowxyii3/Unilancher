@@ -47,10 +47,10 @@ pub enum Icon {
 
 pub fn stat_chip(ui: &mut Ui, text: &str, col: Color32) {
     egui::Frame::new()
-        .fill(col.gamma_multiply(0.12))
-        .stroke(Stroke::new(1.0, col.gamma_multiply(0.35)))
-        .corner_radius(6.0)
-        .inner_margin(Margin::symmetric(8, 3))
+        .fill(col.gamma_multiply(0.14))
+        .stroke(Stroke::new(1.0, col.gamma_multiply(0.40)))
+        .corner_radius(12.0)
+        .inner_margin(Margin::symmetric(10, 4))
         .show(ui, |ui| {
             ui.label(RichText::new(text).size(11.5).strong().color(WHITE));
         });
@@ -63,36 +63,34 @@ pub fn search_bar(
     accent: Color32,
     th: ThemeColors,
 ) {
+    let active = !query.is_empty();
     egui::Frame::new()
-        .fill(th.card)
+        .fill(if active { th.card_hover } else { th.card })
         .stroke(Stroke::new(
-            1.0,
-            if query.is_empty() {
-                th.card_border
-            } else {
-                accent.gamma_multiply(0.7)
-            },
+            if active { 1.5 } else { 1.0 },
+            if active { accent } else { th.card_border },
         ))
-        .corner_radius(8.0)
-        .inner_margin(Margin::symmetric(10, 6))
+        .corner_radius(20.0)
+        .inner_margin(Margin::symmetric(12, 6))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                if !query.is_empty() && ui.small_button("✕").clicked() {
-                    query.clear();
-                }
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                draw_icon(ui.painter(), Icon::Search, r.center(), if active { accent } else { DIM });
+
                 let resp = ui.add(
                     egui::TextEdit::singleline(query)
                         .frame(egui::Frame::NONE)
-                        .hint_text(RichText::new("Rechercher (Ctrl+F)…").color(DIM))
-                        .desired_width(180.0),
+                        .hint_text(RichText::new("Rechercher (Ctrl+F)…").size(12.5).color(DIM))
+                        .desired_width(190.0),
                 );
                 if *focus_req {
                     resp.request_focus();
                     *focus_req = false;
                 }
-                let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-                draw_icon(ui.painter(), Icon::Search, r.center(), DIM);
+                if !query.is_empty() && ui.small_button("✕").clicked() {
+                    query.clear();
+                }
             });
         });
 }
@@ -108,30 +106,28 @@ pub fn modern_action_button(
 ) -> bool {
     let font = FontId::proportional(13.0);
     let gal = ui.painter().layout_no_wrap(label.to_string(), font, WHITE);
-    let size = vec2(gal.size().x + 40.0, 34.0);
+    let size = vec2(gal.size().x + 42.0, 36.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hov_t = ui.ctx().animate_bool(resp.id, resp.hovered());
 
     let bg = if primary {
-        fill_col.lerp_to_gamma(Color32::WHITE, hov_t * 0.14)
+        fill_col.lerp_to_gamma(Color32::WHITE, hov_t * 0.16)
     } else {
         th.card.lerp_to_gamma(th.card_hover, hov_t)
     };
     let p = ui.painter();
-    p.rect_filled(rect, CornerRadius::same(8), bg);
-    if !primary {
-        p.rect_stroke(
-            rect,
-            CornerRadius::same(8),
-            Stroke::new(1.0, th.card_border.lerp_to_gamma(WHITE, hov_t * 0.2)),
-            StrokeKind::Inside,
-        );
-    }
+    p.rect_filled(rect, CornerRadius::same(10), bg);
+    let border_col = if primary {
+        fill_col.lerp_to_gamma(WHITE, 0.3)
+    } else {
+        th.card_border.lerp_to_gamma(WHITE, hov_t * 0.25)
+    };
+    p.rect_stroke(rect, CornerRadius::same(10), Stroke::new(1.0, border_col), StrokeKind::Inside);
 
     let icon_pos = pos2(rect.left() + 16.0, rect.center().y);
     draw_icon(p, icon, icon_pos, WHITE);
     p.galley(
-        pos2(rect.left() + 29.0, rect.center().y - gal.size().y / 2.0),
+        pos2(rect.left() + 30.0, rect.center().y - gal.size().y / 2.0),
         gal,
         WHITE,
     );
@@ -233,12 +229,18 @@ pub fn sidebar_item(
 
     if let Some(c) = count {
         let badge_str = c.to_string();
+        let badge_w = (badge_str.len() as f32 * 7.0 + 12.0).max(18.0);
+        let badge_rect = Rect::from_center_size(
+            pos2(rect.right() - 8.0 - badge_w / 2.0, rect.center().y),
+            vec2(badge_w, 18.0),
+        );
+        p.rect_filled(badge_rect, CornerRadius::same(9), th.badge_bg);
         p.text(
-            pos2(rect.right() - 12.0, rect.center().y),
-            Align2::RIGHT_CENTER,
+            badge_rect.center(),
+            Align2::CENTER_CENTER,
             badge_str,
-            FontId::proportional(11.5),
-            DIM,
+            FontId::proportional(11.0),
+            if active { color } else { DIM },
         );
     }
 
@@ -553,9 +555,10 @@ pub fn hero_banner(
     tex: Option<&TextureHandle>,
     accent: Color32,
     th: ThemeColors,
-) -> bool {
+) -> (bool, bool) {
     let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 148.0), Sense::click());
+    let banner_h = 166.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, banner_h), Sense::hover());
     let hov_t = ui
         .ctx()
         .animate_bool(Id::unique(("hero_hov", &g.id)), resp.hovered());
@@ -565,7 +568,13 @@ pub fn hero_banner(
     let (c1, c2) = cover_colors(&g.name);
     draw_gradient_rect(&clip, rect, c2, th.card);
 
-    let thumb_rect = Rect::from_min_size(rect.min + vec2(16.0, 14.0), vec2(88.0, 120.0));
+    // Halo lumineux dynamique lors du survol
+    if hov_t > 0.01 {
+        let glow_col = accent.gamma_multiply(0.12 * hov_t);
+        p.rect_filled(rect.expand(2.0), CornerRadius::same(14), glow_col);
+    }
+
+    let thumb_rect = Rect::from_min_size(rect.min + vec2(16.0, 16.0), vec2(96.0, 134.0));
     if let Some(t) = tex {
         clip.image(
             t.id(),
@@ -576,13 +585,21 @@ pub fn hero_banner(
     } else {
         draw_gradient_rect(&clip, thumb_rect, c1, c2);
     }
+    p.rect_stroke(
+        thumb_rect,
+        CornerRadius::same(8),
+        Stroke::new(1.0, th.card_border),
+        StrokeKind::Inside,
+    );
 
-    let text_x = thumb_rect.right() + 20.0;
+    let text_x = thumb_rect.right() + 22.0;
+
+    // Badge "REPRENDRE LA SESSION"
     pill(
         &clip,
-        pos2(text_x, rect.top() + 20.0),
+        pos2(text_x, rect.top() + 18.0),
         "REPRENDRE LA SESSION",
-        accent.gamma_multiply(0.22),
+        accent.gamma_multiply(0.25),
         WHITE,
     );
 
@@ -596,33 +613,54 @@ pub fn hero_banner(
 
     let sub_info = format!("{}  •  {}", g.source.label(), format_playtime(play_mins));
     clip.text(
-        pos2(text_x, rect.top() + 76.0),
+        pos2(text_x, rect.top() + 80.0),
         Align2::LEFT_TOP,
         sub_info,
         FontId::proportional(12.5),
         DIM,
     );
 
-    let btn_rect = Rect::from_min_size(pos2(text_x, rect.top() + 102.0), vec2(140.0, 32.0));
-    let btn_bg = accent.lerp_to_gamma(WHITE, hov_t * 0.15);
-    clip.rect_filled(btn_rect, CornerRadius::same(7), btn_bg);
+    // Boutons Jouer et Propriétés
+    let btn_play_rect = Rect::from_min_size(pos2(text_x, rect.top() + 112.0), vec2(150.0, 36.0));
+    let play_resp = ui.interact(btn_play_rect, Id::unique(("hero_play", &g.id)), Sense::click());
+    let play_hov = play_resp.hovered();
+    let play_bg = if play_hov { accent.lerp_to_gamma(WHITE, 0.15) } else { accent };
+    clip.rect_filled(btn_play_rect, CornerRadius::same(8), play_bg);
     clip.text(
-        btn_rect.center(),
+        btn_play_rect.center(),
         Align2::CENTER_CENTER,
-        "Jouer maintenant",
-        FontId::proportional(12.5),
+        "▶  Jouer maintenant",
+        FontId::proportional(13.0),
         WHITE,
+    );
+
+    let btn_prop_rect = Rect::from_min_size(pos2(btn_play_rect.right() + 12.0, rect.top() + 112.0), vec2(120.0, 36.0));
+    let prop_resp = ui.interact(btn_prop_rect, Id::unique(("hero_prop", &g.id)), Sense::click());
+    let prop_hov = prop_resp.hovered();
+    let prop_bg = if prop_hov { th.card_hover } else { th.card };
+    clip.rect_filled(btn_prop_rect, CornerRadius::same(8), prop_bg);
+    clip.rect_stroke(
+        btn_prop_rect,
+        CornerRadius::same(8),
+        Stroke::new(1.0, if prop_hov { WHITE.gamma_multiply(0.3) } else { th.card_border }),
+        StrokeKind::Inside,
+    );
+    clip.text(
+        btn_prop_rect.center(),
+        Align2::CENTER_CENTER,
+        "⚙  Propriétés",
+        FontId::proportional(12.5),
+        if prop_hov { WHITE } else { DIM },
     );
 
     p.rect_stroke(
         rect,
-        CornerRadius::same(12),
+        CornerRadius::same(14),
         Stroke::new(1.0, th.card_border.lerp_to_gamma(accent, hov_t * 0.6)),
         StrokeKind::Inside,
     );
 
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
+    (play_resp.clicked(), prop_resp.clicked())
 }
 
 #[allow(clippy::too_many_arguments)]

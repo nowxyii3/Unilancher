@@ -1,15 +1,13 @@
 use crate::app::Launcher;
 use crate::config::{Game, Source};
-use crate::process::open_uri;
-use crate::scan;
 use crate::theme::{DIM, GOLD, RED, WHITE};
 use crate::types::{format_playtime, Action, SortMode, Tab, ViewMode};
 use crate::ui::components::{
     draw_icon, game_card, game_list_row, hero_banner, icon_square_button, modern_action_button,
-    search_bar, stat_chip, trunc, Icon,
+    search_bar, stat_chip, Icon,
 };
 use eframe::egui::{
-    self, vec2, Align, Color32, CornerRadius, Key, Layout, Margin, RichText, Sense, Stroke, Ui,
+    self, vec2, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Ui,
 };
 use std::collections::HashSet;
 
@@ -100,78 +98,84 @@ impl Launcher {
 
         ui.add_space(14.0);
 
-        // ── Barre de tri, filtres rapides & Mode d'affichage (Grille / Liste) ──
+        // ── Segmented Control pour les Filtres rapides (Style React / Tailwind Tabs) ──
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Filtre").size(12.0).color(DIM));
-            ui.add_space(4.0);
-            for (idx, lbl) in [
-                (0, "Tous"),
-                (1, "⭐ Favoris"),
-                (2, "🕒 Joués"),
-                (3, "✨ Non lancés"),
-            ] {
-                let sel = self.settings.quick_filter_mode == idx;
-                let bg = if sel {
-                    accent.gamma_multiply(0.22)
-                } else {
-                    th.card
-                };
-                let fg = if sel { WHITE } else { DIM };
-                let btn = egui::Button::new(RichText::new(lbl).size(12.0).color(fg))
-                    .fill(bg)
-                    .stroke(Stroke::new(
-                        1.0,
-                        if sel {
-                            accent.gamma_multiply(0.8)
+            egui::Frame::new()
+                .fill(th.panel)
+                .stroke(Stroke::new(1.0, th.card_border))
+                .corner_radius(10.0)
+                .inner_margin(Margin::same(3))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (idx, lbl) in [
+                        (0, "Tous"),
+                        (1, "⭐ Favoris"),
+                        (2, "🕒 Récents"),
+                        (3, "✨ Non lancés"),
+                    ] {
+                        let sel = self.settings.quick_filter_mode == idx;
+                        let bg = if sel {
+                            accent.gamma_multiply(0.28)
                         } else {
-                            th.card_border
-                        },
-                    ))
-                    .corner_radius(7.0);
-                if ui
-                    .add(btn)
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    self.settings.quick_filter_mode = idx;
-                }
-            }
+                            Color32::TRANSPARENT
+                        };
+                        let fg = if sel { WHITE } else { DIM };
+                        let btn = egui::Button::new(RichText::new(lbl).size(12.0).strong().color(fg))
+                            .fill(bg)
+                            .stroke(Stroke::new(
+                                1.0,
+                                if sel { accent.gamma_multiply(0.8) } else { Color32::TRANSPARENT },
+                            ))
+                            .corner_radius(8.0);
+                        if ui
+                            .add(btn)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.settings.quick_filter_mode = idx;
+                        }
+                    }
+                });
 
-            ui.add_space(14.0);
-            ui.label(RichText::new("Trier par").size(12.0).color(DIM));
-            ui.add_space(4.0);
-            for (mode, lbl) in [
-                (SortMode::Playtime, "Temps de jeu"),
-                (SortMode::Name, "Ordre alphabétique"),
-                (SortMode::Favorites, "Favoris en tête"),
-                (SortMode::SizeOnDisk, "Taille disque"),
-            ] {
-                let sel = self.sort == mode;
-                let bg = if sel {
-                    accent.gamma_multiply(0.18)
-                } else {
-                    th.card
-                };
-                let fg = if sel { WHITE } else { DIM };
-                let btn = egui::Button::new(RichText::new(lbl).size(12.0).color(fg))
-                    .fill(bg)
-                    .stroke(Stroke::new(
-                        1.0,
-                        if sel {
-                            accent.gamma_multiply(0.7)
+            ui.add_space(8.0);
+
+            // Segmented Control pour le Tri
+            egui::Frame::new()
+                .fill(th.panel)
+                .stroke(Stroke::new(1.0, th.card_border))
+                .corner_radius(10.0)
+                .inner_margin(Margin::same(3))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (mode, lbl) in [
+                        (SortMode::Playtime, "Temps de jeu"),
+                        (SortMode::Name, "A → Z"),
+                        (SortMode::Favorites, "Favoris"),
+                        (SortMode::SizeOnDisk, "Taille disque"),
+                    ] {
+                        let sel = self.sort == mode;
+                        let bg = if sel {
+                            accent.gamma_multiply(0.25)
                         } else {
-                            th.card_border
-                        },
-                    ))
-                    .corner_radius(7.0);
-                if ui
-                    .add(btn)
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    self.sort = mode;
-                }
-            }
+                            Color32::TRANSPARENT
+                        };
+                        let fg = if sel { WHITE } else { DIM };
+                        let btn = egui::Button::new(RichText::new(lbl).size(12.0).strong().color(fg))
+                            .fill(bg)
+                            .stroke(Stroke::new(
+                                1.0,
+                                if sel { accent.gamma_multiply(0.7) } else { Color32::TRANSPARENT },
+                            ))
+                            .corner_radius(8.0);
+                        if ui
+                            .add(btn)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.sort = mode;
+                        }
+                    }
+                });
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if icon_square_button(
@@ -254,8 +258,13 @@ impl Launcher {
                     let fg_mins = self.total_playtime_mins(&fg_game);
                     let fg_tex = self.get_cover_texture(&ctx, &fg_game);
 
-                    if hero_banner(ui, &fg_game, fg_mins, fg_tex.as_ref(), accent, th) {
+                    let (play_clicked, prop_clicked) =
+                        hero_banner(ui, &fg_game, fg_mins, fg_tex.as_ref(), accent, th);
+                    if play_clicked {
                         actions.push(Action::Launch(featured_idx));
+                    }
+                    if prop_clicked {
+                        actions.push(Action::OpenDetails(fg_game.id.clone()));
                     }
                     ui.add_space(18.0);
                 }
@@ -336,335 +345,104 @@ impl Launcher {
         actions: &mut Vec<Action>,
     ) {
         let has_custom_cover = self.settings.cover_overrides.contains_key(&g.id);
-        let has_custom_exe = self.settings.exe_overrides.contains_key(&g.id);
         let is_hidden = self.settings.hidden_games.contains(&g.id);
+        let accent = self.accent();
 
         resp.context_menu(|ui| {
-            ui.set_min_width(220.0);
-            if ui.button("Lancer le jeu").clicked() {
+            ui.set_min_width(240.0);
+            ui.spacing_mut().item_spacing.y = 3.0;
+
+            // En-tête avec nom du jeu et plateforme
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&g.name).size(13.0).strong().color(WHITE));
+            });
+            ui.label(
+                RichText::new(format!(
+                    "{}  •  {}",
+                    g.source.label(),
+                    format_playtime(self.total_playtime_mins(g))
+                ))
+                .size(11.0)
+                .color(DIM),
+            );
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            // Bouton Jouer
+            let play_btn = egui::Button::new(
+                RichText::new("▶  Lancer le jeu").size(12.5).strong().color(WHITE),
+            )
+            .fill(accent.gamma_multiply(0.22))
+            .stroke(Stroke::new(1.0, accent.gamma_multiply(0.7)))
+            .corner_radius(6.0);
+            if ui.add(play_btn).clicked() {
                 actions.push(Action::Launch(idx));
                 ui.close();
             }
-            if ui.button("Propriétés, notes & arguments…").clicked() {
+
+            // Bouton Propriétés & Configuration
+            if ui.button("⚙  Propriétés & Configuration…").clicked() {
                 actions.push(Action::OpenDetails(g.id.clone()));
                 ui.close();
             }
+
+            // Favori
             let fav_lbl = if fav {
-                "Retirer des favoris"
+                "⭐  Retirer des favoris"
             } else {
-                "Ajouter aux favoris"
+                "⭐  Ajouter aux favoris"
             };
             if ui.button(fav_lbl).clicked() {
                 actions.push(Action::Fav(g.id.clone()));
                 ui.close();
             }
+
             ui.separator();
-            if ui.button("Changer la jaquette…").clicked() {
+
+            // Jaquette & Sauvegarde
+            if ui.button("🎨  Modifier la jaquette HD…").clicked() {
                 actions.push(Action::PickCover(g.id.clone()));
                 ui.close();
             }
-            if has_custom_cover && ui.button("Réinitialiser la jaquette").clicked() {
+            if has_custom_cover && ui.button("🔄  Réinitialiser la jaquette").clicked() {
                 actions.push(Action::ClearCover(g.id.clone()));
                 ui.close();
             }
-            if ui.button("Définir un exécutable personnalisé…").clicked() {
-                actions.push(Action::PickExe(g.id.clone()));
-                ui.close();
-            }
-            if has_custom_exe && ui.button("Réinitialiser l'exécutable").clicked() {
-                actions.push(Action::ClearExe(g.id.clone()));
+            if ui.button("💾  Sauvegarder les données (Backup)").clicked() {
+                actions.push(Action::BackupSave(g.id.clone()));
                 ui.close();
             }
             if let Some(d) = &g.install_dir {
-                if d.exists() && ui.button("Ouvrir le dossier d'installation").clicked() {
+                if d.exists() && ui.button("📂  Ouvrir l'emplacement local").clicked() {
                     actions.push(Action::OpenDir(d.clone()));
                     ui.close();
                 }
             }
+
             ui.separator();
+
+            // Masquer / Supprimer
             let hide_lbl = if is_hidden {
-                "Restaurer dans la bibliothèque"
+                "👁️  Restaurer dans la bibliothèque"
             } else {
-                "Masquer ce jeu"
+                "👁️  Masquer ce titre"
             };
             if ui.button(hide_lbl).clicked() {
                 actions.push(Action::ToggleHide(g.id.clone()));
                 ui.close();
             }
+
             if g.source == Source::Manual
                 && ui
-                    .button(RichText::new("Supprimer de la liste").color(RED))
+                    .button(RichText::new("🗑️  Supprimer de la bibliothèque").color(RED))
                     .clicked()
             {
                 actions.push(Action::Remove(g.id.clone()));
                 ui.close();
             }
+            ui.add_space(2.0);
         });
-    }
-
-    pub fn details_drawer_ui(&mut self, ui: &mut egui::Ui) -> Vec<Action> {
-        let mut actions = vec![];
-        let Some(game_id) = self.selected_game_id.clone() else {
-            return actions;
-        };
-        let Some((idx, game)) = self
-            .games
-            .iter()
-            .enumerate()
-            .find(|(_, g)| g.id == game_id)
-            .map(|(i, g)| (i, g.clone()))
-        else {
-            self.selected_game_id = None;
-            return actions;
-        };
-
-        let accent = self.accent();
-        let th = self.theme();
-        let mut close_drawer = false;
-        let mut save_needed = false;
-
-        egui::Panel::right("game_details_drawer")
-            .exact_size(340.0)
-            .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(th.panel)
-                    .stroke(Stroke::new(1.0, th.panel_border))
-                    .inner_margin(Margin::symmetric(20, 20)),
-            )
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Propriétés du jeu").size(16.0).strong().color(WHITE));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.small_button("✕").clicked() {
-                            close_drawer = true;
-                        }
-                    });
-                });
-                ui.add_space(12.0);
-
-                ui.label(RichText::new(&game.name).size(20.0).strong().color(WHITE));
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!(
-                        "{}  •  {}",
-                        game.source.label(),
-                        format_playtime(self.total_playtime_mins(&game))
-                    ))
-                    .size(12.5)
-                    .color(DIM),
-                );
-                if game.size_bytes > 0 {
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(format!("Espace disque : {}", scan::format_size(game.size_bytes)))
-                            .size(12.0)
-                            .color(GOLD),
-                    );
-                }
-
-                ui.add_space(16.0);
-                if modern_action_button(ui, "Lancer maintenant", Icon::Play, accent, true, th) {
-                    actions.push(Action::Launch(idx));
-                }
-
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(12.0);
-
-                ui.label(RichText::new("Arguments de lancement").size(13.0).strong().color(WHITE));
-                ui.label(
-                    RichText::new("Options passées à l'exécutable (ex: -dx11 -windowed)")
-                        .size(11.5)
-                        .color(DIM),
-                );
-                ui.add_space(6.0);
-                let mut args = self
-                    .settings
-                    .launch_args
-                    .get(&game.id)
-                    .cloned()
-                    .unwrap_or_default();
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut args)
-                            .hint_text("-novid -high")
-                            .desired_width(f32::INFINITY)
-                            .margin(Margin::symmetric(10, 8)),
-                    )
-                    .changed()
-                {
-                    if args.trim().is_empty() {
-                        self.settings.launch_args.remove(&game.id);
-                    } else {
-                        self.settings.launch_args.insert(game.id.clone(), args);
-                    }
-                    save_needed = true;
-                }
-
-                ui.add_space(16.0);
-                ui.label(RichText::new("Notes personnelles").size(13.0).strong().color(WHITE));
-                ui.add_space(6.0);
-                let mut notes = self
-                    .settings
-                    .game_notes
-                    .get(&game.id)
-                    .cloned()
-                    .unwrap_or_default();
-                if ui
-                    .add(
-                        egui::TextEdit::multiline(&mut notes)
-                            .hint_text("Objectifs, mods installés, codes, configuration...")
-                            .desired_rows(5)
-                            .desired_width(f32::INFINITY)
-                            .margin(Margin::symmetric(10, 8)),
-                    )
-                    .changed()
-                {
-                    if notes.trim().is_empty() {
-                        self.settings.game_notes.remove(&game.id);
-                    } else {
-                        self.settings.game_notes.insert(game.id.clone(), notes);
-                    }
-                    save_needed = true;
-                }
-
-                ui.add_space(16.0);
-                ui.label(RichText::new("Tags & Catégories").size(13.0).strong().color(WHITE));
-                ui.label(
-                    RichText::new("Permet de filtrer et classer tes jeux")
-                        .size(11.5)
-                        .color(DIM),
-                );
-                ui.add_space(6.0);
-
-                let mut current_tags = self
-                    .settings
-                    .game_tags
-                    .get(&game.id)
-                    .cloned()
-                    .unwrap_or_default();
-
-                if !current_tags.is_empty() {
-                    let mut to_remove = None;
-                    ui.horizontal_wrapped(|ui| {
-                        for (idx, tag) in current_tags.iter().enumerate() {
-                            let label = format!("{tag} ✕");
-                            if ui.button(RichText::new(label).size(11.0).color(WHITE)).clicked() {
-                                to_remove = Some(idx);
-                            }
-                        }
-                    });
-                    if let Some(i) = to_remove {
-                        current_tags.remove(i);
-                        if current_tags.is_empty() {
-                            self.settings.game_tags.remove(&game.id);
-                        } else {
-                            self.settings.game_tags.insert(game.id.clone(), current_tags.clone());
-                        }
-                        save_needed = true;
-                    }
-                }
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    let w = (ui.available_width() - 80.0).max(80.0);
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.new_tag_input)
-                            .hint_text("Ajouter un tag (ex: RPG)...")
-                            .desired_width(w)
-                            .margin(Margin::symmetric(8, 6)),
-                    );
-                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                    if ui.button("Ajouter").clicked() || enter {
-                        let trimmed = self.new_tag_input.trim().to_string();
-                        if !trimmed.is_empty() && !current_tags.iter().any(|t| t.eq_ignore_ascii_case(&trimmed)) {
-                            current_tags.push(trimmed);
-                            self.settings.game_tags.insert(game.id.clone(), current_tags.clone());
-                            self.new_tag_input.clear();
-                            save_needed = true;
-                        }
-                    }
-                });
-
-                ui.horizontal_wrapped(|ui| {
-                    for sugg in ["RPG", "Action", "Solo", "Coop", "Terminé", "En cours", "Favori"] {
-                        if !current_tags.iter().any(|t| t.eq_ignore_ascii_case(sugg))
-                            && ui.small_button(format!("+ {sugg}")).clicked()
-                        {
-                            current_tags.push(sugg.to_string());
-                            self.settings.game_tags.insert(game.id.clone(), current_tags.clone());
-                            save_needed = true;
-                        }
-                    }
-                });
-
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(12.0);
-
-                ui.label(RichText::new("Raccourcis communautaires").size(13.0).strong().color(WHITE));
-                ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
-                    let enc_name = game.name.replace(' ', "%20");
-                    if ui.button("🌐 PCGamingWiki").on_hover_text("Fixes, résolutions ultrawide & patchs").clicked() {
-                        let _ = open_uri(&format!("https://www.pcgamingwiki.com/w/index.php?search={enc_name}"));
-                    }
-                    if ui.button("🧩 NexusMods").on_hover_text("Mods et utilitaires").clicked() {
-                        let _ = open_uri(&format!("https://www.nexusmods.com/search/?gsearch={enc_name}"));
-                    }
-                    if ui.button("⏱️ HowLongToBeat").on_hover_text("Estimation de durée de vie").clicked() {
-                        let _ = open_uri(&format!("https://howlongtobeat.com/?q={enc_name}"));
-                    }
-                    if ui.button("🐧 ProtonDB").on_hover_text("Compatibilité Linux / Steam Deck").clicked() {
-                        let _ = open_uri(&format!("https://www.protondb.com/search?q={enc_name}"));
-                    }
-                });
-
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(12.0);
-
-                ui.label(RichText::new("Sauvegarde des Données (Save Backup)").size(13.0).strong().color(WHITE));
-                ui.add_space(4.0);
-                if let Some(save_p) = scan::find_save_folder(&game) {
-                    ui.label(RichText::new(format!("📁 {}", trunc(&save_p.to_string_lossy(), 34))).size(11.0).color(DIM));
-                    ui.add_space(4.0);
-                    if ui.button("💾 Créer une sauvegarde de secours").clicked() {
-                        actions.push(Action::BackupSave(game.id.clone()));
-                    }
-                } else {
-                    ui.label(RichText::new("Dossier de sauvegarde non détecté automatiquement").size(11.0).color(DIM));
-                }
-
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(12.0);
-
-                ui.label(RichText::new("Fichiers & Raccourcis").size(13.0).strong().color(WHITE));
-                ui.add_space(8.0);
-                if ui.button("🔄 Télécharger jaquette HD en ligne").clicked() {
-                    actions.push(Action::DownloadCover(game.id.clone()));
-                }
-                if ui.button("Modifier la jaquette…").clicked() {
-                    actions.push(Action::PickCover(game.id.clone()));
-                }
-                if ui.button("Sélectionner un exécutable (.exe)…").clicked() {
-                    actions.push(Action::PickExe(game.id.clone()));
-                }
-                if let Some(dir) = &game.install_dir {
-                    if dir.exists() && ui.button("Ouvrir le dossier local").clicked() {
-                        actions.push(Action::OpenDir(dir.clone()));
-                    }
-                }
-            });
-
-        if save_needed {
-            self.settings.save();
-        }
-        if close_drawer {
-            self.selected_game_id = None;
-        }
-        actions
     }
 }
