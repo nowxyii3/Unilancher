@@ -1,15 +1,23 @@
 use crate::app::Launcher;
 use crate::config::{Game, Source};
-use crate::theme::{DIM, GOLD, RED, WHITE};
+use crate::theme::{
+    BNET_C, EA_C, EPIC_C, GOG_C, GOLD, RED, STEAM_C, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY,
+    UBI_C, WHITE, XBOX_C,
+};
 use crate::types::{format_playtime, Action, SortMode, Tab, ViewMode};
 use crate::ui::components::{
     draw_icon, game_card, game_list_row, hero_banner, icon_square_button, modern_action_button,
     search_bar, stat_chip, Icon,
 };
 use eframe::egui::{
-    self, vec2, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Ui,
+    self, vec2, Align, Color32, CornerRadius, Layout, Margin, Rect, RichText, Sense, Stroke, Ui,
 };
 use std::collections::HashSet;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  UniLauncher — Vue Principale de la Bibliothèque
+//  Design inspiré de Linear, Raycast, Steam et Arc Browser
+// ═══════════════════════════════════════════════════════════════════════════════
 
 impl Launcher {
     pub fn library_ui(&mut self, ui: &mut Ui) -> Vec<Action> {
@@ -19,16 +27,16 @@ impl Launcher {
         let mut actions: Vec<Action> = vec![];
 
         let (title, subtitle) = match self.tab {
-            Tab::All => ("Bibliothèque", "Ensemble de tes titres détectés et ajoutés"),
-            Tab::Favorites => ("Favoris", "Accès rapide à tes titres prioritaires"),
-            Tab::Steam => ("Steam", "Titres installés via ton client Steam local"),
-            Tab::Epic => ("Epic Games", "Titres détectés depuis les manifestes Epic Games"),
-            Tab::Gog => ("GOG Galaxy", "Titres détectés via GOG Galaxy"),
-            Tab::Ubisoft => ("Ubisoft Connect", "Titres détectés via Ubisoft Connect"),
-            Tab::Ea => ("EA App / Origin", "Titres détectés via EA App / Origin"),
-            Tab::Battlenet => ("Battle.net", "Titres détectés via l'écosystème Battle.net / Blizzard"),
-            Tab::Xbox => ("Xbox / Game Pass", "Titres détectés via Xbox PC"),
-            Tab::Manual => ("Jeux manuels", "Exécutables autonomes et jeux indépendants"),
+            Tab::All => ("Bibliothèque", "Catalogue unifié de vos jeux PC détectés et installés"),
+            Tab::Favorites => ("Favoris", "Accès direct et prioritaire à vos titres favoris"),
+            Tab::Steam => ("Steam", "Titres synchronisés depuis votre bibliothèque Steam"),
+            Tab::Epic => ("Epic Games", "Titres détectés via les manifestes Epic Games Store"),
+            Tab::Gog => ("GOG Galaxy", "Jeux sans DRM synchronisés depuis GOG Galaxy"),
+            Tab::Ubisoft => ("Ubisoft Connect", "Titres détectés via le client Ubisoft Connect"),
+            Tab::Ea => ("EA App", "Titres détectés via l'écosystème Electronic Arts"),
+            Tab::Battlenet => ("Battle.net", "Titres Blizzard et Battle.net installés"),
+            Tab::Xbox => ("Xbox & Game Pass", "Jeux Windows Store et PC Game Pass"),
+            Tab::Manual => ("Jeux manuels", "Exécutables indépendants et jeux sans launcher"),
             Tab::Emulators => ("Émulateurs & ROMs", "Jeux rétros et consoles émulées"),
             Tab::Deals => ("Bons Plans Gratuits", "Jeux offerts sur l'Epic Games Store"),
             Tab::Hidden => ("Jeux masqués", "Titres retirés de l'affichage principal"),
@@ -51,32 +59,29 @@ impl Launcher {
             .collect::<HashSet<_>>()
             .len();
 
-        // ── En-tête + Barre d'actions ──
+        // ── 1. EN-TÊTE PRINCIPAL & BARRE D'ACTIONS RAPIDES ──
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(title).size(26.0).strong().color(WHITE));
+                    ui.label(RichText::new(title).size(24.0).strong().color(TEXT_PRIMARY));
                     ui.add_space(8.0);
                     stat_chip(ui, &format!("{} titres", filtered.len()), accent);
                     if total_mins > 0 {
                         stat_chip(
                             ui,
-                            &format!("{:.1} h cumulées", total_mins as f32 / 60.0),
+                            &format!("{:.1} h", total_mins as f32 / 60.0),
                             Color32::from_rgb(56, 189, 248),
                         );
                     }
                     if platform_count > 1 {
-                        stat_chip(
-                            ui,
-                            &format!("{} plateformes", platform_count),
-                            GOLD,
-                        );
+                        stat_chip(ui, &format!("{} plateformes", platform_count), GOLD);
                     }
                 });
                 ui.add_space(2.0);
-                ui.label(RichText::new(subtitle).size(12.5).color(DIM));
+                ui.label(RichText::new(subtitle).size(12.0).color(TEXT_SECONDARY));
             });
 
+            // Barre d'outils alignée à droite
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if modern_action_button(ui, "Ajouter un jeu", Icon::Plus, accent, true, th) {
                     actions.push(Action::Add);
@@ -97,66 +102,80 @@ impl Launcher {
             });
         });
 
-        // ── Indicateur de Progression du Scan Multi-Plateformes en Temps Réel ──
+        // ── 2. BANNIÈRE D'ÉTAT DU SCAN EN TEMPS RÉEL (STYLE STEAM/ARC) ──
         if let Some(prog) = &self.scan_progress {
             ui.add_space(8.0);
             egui::Frame::new()
-                .fill(accent.gamma_multiply(0.12))
+                .fill(th.surface_2)
                 .stroke(Stroke::new(1.0, accent.gamma_multiply(0.40)))
-                .corner_radius(10.0)
+                .corner_radius(CornerRadius::same(8))
                 .inner_margin(Margin::symmetric(14, 8))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🔄").size(13.0));
+                        ui.spacing_mut().item_spacing.x = 8.0;
+
+                        // Pastille animée de synchronisation
+                        let (icon_r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                        draw_icon(ui.painter(), Icon::Refresh, icon_r.center(), accent);
+
                         let desc = if prog.games_found > 0 {
                             format!("{} ({} trouvés)", prog.stage, prog.games_found)
                         } else {
                             prog.stage.clone()
                         };
-                        ui.label(RichText::new(desc).size(12.5).strong().color(WHITE));
+                        ui.label(RichText::new(desc).size(12.0).strong().color(TEXT_PRIMARY));
+
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let pct_str = format!("{:.0}%", prog.percent * 100.0);
-                            ui.label(RichText::new(pct_str).size(12.0).strong().color(accent));
-                            let pb = egui::ProgressBar::new(prog.percent)
-                                .desired_width(120.0)
-                                .fill(accent);
-                            ui.add(pb);
+                            ui.label(RichText::new(pct_str).size(11.5).strong().color(accent));
+
+                            // Barre de progression fine (4px)
+                            let (bar_rect, _) = ui.allocate_exact_size(vec2(120.0, 4.0), Sense::hover());
+                            ui.painter().rect_filled(bar_rect, CornerRadius::same(2), th.surface_3);
+                            let fill_w = (bar_rect.width() * prog.percent).clamp(2.0, bar_rect.width());
+                            let fill_r = Rect::from_min_size(bar_rect.min, vec2(fill_w, 4.0));
+                            ui.painter().rect_filled(fill_r, CornerRadius::same(2), accent);
                         });
                     });
                 });
         }
 
-        ui.add_space(14.0);
+        ui.add_space(12.0);
 
-        // ── Segmented Control pour les Filtres rapides (Style React / Tailwind Tabs) ──
+        // ── 3. CONTRÔLES SEGMENTÉS (FILTRES, TRIS & MODES D'AFFICHAGE) ──
         ui.horizontal(|ui| {
+            // Segmented Control Filtres Rapides
             egui::Frame::new()
-                .fill(th.panel)
-                .stroke(Stroke::new(1.0, th.card_border))
-                .corner_radius(10.0)
-                .inner_margin(Margin::same(3))
+                .fill(th.surface_1)
+                .stroke(Stroke::new(1.0, th.border_subtle))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::same(2))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.spacing_mut().item_spacing.x = 1.0;
                     for (idx, lbl) in [
-                        (0, "Tous"),
+                        (0, "Tous les jeux"),
                         (1, "⭐ Favoris"),
                         (2, "🕒 Récents"),
                         (3, "✨ Non lancés"),
                     ] {
                         let sel = self.settings.quick_filter_mode == idx;
                         let bg = if sel {
-                            accent.gamma_multiply(0.28)
+                            accent.gamma_multiply(0.20)
                         } else {
                             Color32::TRANSPARENT
                         };
-                        let fg = if sel { WHITE } else { DIM };
-                        let btn = egui::Button::new(RichText::new(lbl).size(12.0).strong().color(fg))
+                        let border_stroke = if sel {
+                            Stroke::new(1.0, accent.gamma_multiply(0.60))
+                        } else {
+                            Stroke::NONE
+                        };
+                        let fg = if sel { TEXT_PRIMARY } else { TEXT_SECONDARY };
+
+                        let btn = egui::Button::new(RichText::new(lbl).size(11.5).strong().color(fg))
                             .fill(bg)
-                            .stroke(Stroke::new(
-                                1.0,
-                                if sel { accent.gamma_multiply(0.8) } else { Color32::TRANSPARENT },
-                            ))
-                            .corner_radius(8.0);
+                            .stroke(border_stroke)
+                            .corner_radius(6.0);
+
                         if ui
                             .add(btn)
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -169,14 +188,14 @@ impl Launcher {
 
             ui.add_space(8.0);
 
-            // Segmented Control pour le Tri
+            // Segmented Control Ordre de Tri
             egui::Frame::new()
-                .fill(th.panel)
-                .stroke(Stroke::new(1.0, th.card_border))
-                .corner_radius(10.0)
-                .inner_margin(Margin::same(3))
+                .fill(th.surface_1)
+                .stroke(Stroke::new(1.0, th.border_subtle))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::same(2))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.spacing_mut().item_spacing.x = 1.0;
                     for (mode, lbl) in [
                         (SortMode::Playtime, "Temps de jeu"),
                         (SortMode::Name, "A → Z"),
@@ -185,18 +204,22 @@ impl Launcher {
                     ] {
                         let sel = self.sort == mode;
                         let bg = if sel {
-                            accent.gamma_multiply(0.25)
+                            th.surface_3
                         } else {
                             Color32::TRANSPARENT
                         };
-                        let fg = if sel { WHITE } else { DIM };
-                        let btn = egui::Button::new(RichText::new(lbl).size(12.0).strong().color(fg))
+                        let border_stroke = if sel {
+                            Stroke::new(1.0, th.border_default)
+                        } else {
+                            Stroke::NONE
+                        };
+                        let fg = if sel { TEXT_PRIMARY } else { TEXT_TERTIARY };
+
+                        let btn = egui::Button::new(RichText::new(lbl).size(11.5).color(fg))
                             .fill(bg)
-                            .stroke(Stroke::new(
-                                1.0,
-                                if sel { accent.gamma_multiply(0.7) } else { Color32::TRANSPARENT },
-                            ))
-                            .corner_radius(8.0);
+                            .stroke(border_stroke)
+                            .corner_radius(6.0);
+
                         if ui
                             .add(btn)
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -207,6 +230,7 @@ impl Launcher {
                     }
                 });
 
+            // Contrôles de vue alignés à droite
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if icon_square_button(
                     ui,
@@ -217,7 +241,7 @@ impl Launcher {
                 ) {
                     self.is_big_picture = true;
                 }
-                ui.add_space(4.0);
+                ui.add_space(3.0);
                 if icon_square_button(
                     ui,
                     Icon::List,
@@ -237,40 +261,75 @@ impl Launcher {
                     self.view_mode = ViewMode::Grid;
                 }
                 ui.add_space(8.0);
+
+                // Slider de zoom élégant
                 ui.add(
                     egui::Slider::new(&mut self.settings.card_scale, 0.75..=1.35)
                         .show_value(false)
                         .trailing_fill(true),
                 )
-                .on_hover_text(format!("Zoom de la grille ({:.0}%)", self.settings.card_scale * 100.0));
+                .on_hover_text(format!("Échelle des jaquettes ({:.0}%)", self.settings.card_scale * 100.0));
             });
         });
 
         ui.add_space(14.0);
 
+        // ── 4. ÉTAT VIDE SOIGNÉ (EMPTY STATE STYLE LINEAR / RAYCAST) ──
         if filtered.is_empty() {
-            ui.add_space(90.0);
+            ui.add_space(60.0);
             ui.vertical_centered(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(60.0, 60.0), Sense::hover());
-                ui.painter().rect_filled(r, CornerRadius::same(16), th.card);
-                draw_icon(ui.painter(), Icon::Library, r.center(), DIM);
-                ui.add_space(12.0);
-                ui.label(RichText::new("Aucun titre trouvé").size(18.0).strong().color(WHITE));
+                // Conteneur d'icône avec cercle épuré
+                let (r, _) = ui.allocate_exact_size(vec2(56.0, 56.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 28.0, th.surface_2);
+                ui.painter().circle_stroke(r.center(), 28.5, Stroke::new(1.0, th.border_subtle));
+                draw_icon(ui.painter(), Icon::Library, r.center(), accent);
+
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new("Aucun titre ne correspond à vos filtres")
+                        .size(16.0)
+                        .strong()
+                        .color(TEXT_PRIMARY),
+                );
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new("Modifie ta recherche ou ajoute un exécutable via le bouton « Ajouter un jeu ».")
-                        .size(13.0)
-                        .color(DIM),
+                    RichText::new("Ajustez vos filtres de recherche ou ajoutez un nouvel exécutable.")
+                        .size(12.5)
+                        .color(TEXT_SECONDARY),
                 );
+
+                ui.add_space(14.0);
+
+                ui.horizontal(|ui| {
+                    let has_filters = !self.search.is_empty() || self.settings.quick_filter_mode != 0;
+                    if has_filters {
+                        let reset_btn = egui::Button::new(
+                            RichText::new("Réinitialiser les filtres").size(12.0).color(TEXT_PRIMARY),
+                        )
+                        .fill(th.surface_2)
+                        .stroke(Stroke::new(1.0, th.border_default))
+                        .corner_radius(6.0);
+                        if ui.add(reset_btn).clicked() {
+                            self.search.clear();
+                            self.settings.quick_filter_mode = 0;
+                        }
+                        ui.add_space(8.0);
+                    }
+
+                    if modern_action_button(ui, "Ajouter un jeu", Icon::Plus, accent, true, th) {
+                        actions.push(Action::Add);
+                    }
+                });
             });
             return actions;
         }
 
+        // ── 5. ZONE DÉFILABLE : BANNIÈRE HERO + GRILLE / LISTE ──
         egui::ScrollArea::vertical()
             .id_salt("library_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                // Bannière de reprise rapide uniquement sur l'onglet principal sans filtre texte
+                // Bannière Hero immersive uniquement sur l'onglet principal sans recherche textuelle
                 if self.search.is_empty() && self.tab == Tab::All && !filtered.is_empty() {
                     let featured_idx = self
                         .settings
@@ -300,10 +359,12 @@ impl Launcher {
                 }
 
                 match self.view_mode {
+                    // ── Mode Grille de Jaquettes ──
                     ViewMode::Grid => {
                         ui.horizontal_wrapped(|ui| {
                             let spacing = self.settings.grid_spacing.clamp(8.0, 36.0);
-                            ui.spacing_mut().item_spacing = vec2(spacing, spacing + 2.0);
+                            ui.spacing_mut().item_spacing = vec2(spacing, spacing + 4.0);
+
                             for &i in &filtered {
                                 let g = self.games[i].clone();
                                 let fav = favs.contains(&g.id);
@@ -338,9 +399,11 @@ impl Launcher {
                             }
                         });
                     }
+
+                    // ── Mode Liste Détaillée ──
                     ViewMode::List => {
                         ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 8.0;
+                            ui.spacing_mut().item_spacing.y = 6.0;
                             for &i in &filtered {
                                 let g = self.games[i].clone();
                                 let fav = favs.contains(&g.id);
@@ -369,6 +432,7 @@ impl Launcher {
         actions
     }
 
+    // ───────────────────────────── Menu Contextuel du Jeu (Clic Droit) ──────────
     pub fn attach_game_context_menu(
         &self,
         resp: &egui::Response,
@@ -381,42 +445,61 @@ impl Launcher {
         let is_hidden = self.settings.hidden_games.contains(&g.id);
         let accent = self.accent();
 
+        let src_col = match g.source {
+            Source::Steam => STEAM_C,
+            Source::Epic => EPIC_C,
+            Source::Gog => GOG_C,
+            Source::Ubisoft => UBI_C,
+            Source::Ea => EA_C,
+            Source::Battlenet => BNET_C,
+            Source::Xbox => XBOX_C,
+            Source::Manual => accent,
+        };
+
         resp.context_menu(|ui| {
             ui.set_min_width(240.0);
             ui.spacing_mut().item_spacing.y = 3.0;
 
-            // En-tête avec nom du jeu et plateforme
+            // En-tête : Titre + Badge Plateforme
             ui.add_space(2.0);
+            ui.label(RichText::new(&g.name).size(13.5).strong().color(TEXT_PRIMARY));
+
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&g.name).size(13.0).strong().color(WHITE));
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let (dot_r, _) = ui.allocate_exact_size(vec2(6.0, 6.0), Sense::hover());
+                ui.painter().circle_filled(dot_r.center(), 2.5, src_col);
+                ui.label(
+                    RichText::new(format!(
+                        "{}  •  {}",
+                        g.source.label(),
+                        format_playtime(self.total_playtime_mins(g))
+                    ))
+                    .size(11.0)
+                    .color(TEXT_SECONDARY),
+                );
             });
-            ui.label(
-                RichText::new(format!(
-                    "{}  •  {}",
-                    g.source.label(),
-                    format_playtime(self.total_playtime_mins(g))
-                ))
-                .size(11.0)
-                .color(DIM),
-            );
+
             ui.add_space(4.0);
             ui.separator();
             ui.add_space(4.0);
 
-            // Bouton Jouer
+            // Bouton Principal : Lancer
             let play_btn = egui::Button::new(
                 RichText::new("▶  Lancer le jeu").size(12.5).strong().color(WHITE),
             )
-            .fill(accent.gamma_multiply(0.22))
-            .stroke(Stroke::new(1.0, accent.gamma_multiply(0.7)))
+            .fill(accent.gamma_multiply(0.25))
+            .stroke(Stroke::new(1.0, accent.gamma_multiply(0.70)))
             .corner_radius(6.0);
+
             if ui.add(play_btn).clicked() {
                 actions.push(Action::Launch(idx));
                 ui.close();
             }
 
-            // Bouton Fiche détaillée & Propriétés
-            if ui.button("📋  Fiche détaillée du jeu & Propriétés…").clicked() {
+            ui.add_space(2.0);
+
+            // Fiche détaillée
+            if ui.button("📋  Fiche détaillée & Propriétés…").clicked() {
                 actions.push(Action::OpenDetails(g.id.clone()));
                 ui.close();
             }
@@ -434,7 +517,7 @@ impl Launcher {
 
             ui.separator();
 
-            // Jaquette & Sauvegarde
+            // Jaquette & Fichiers
             if ui.button("🎨  Modifier la jaquette HD…").clicked() {
                 actions.push(Action::PickCover(g.id.clone()));
                 ui.close();
@@ -448,7 +531,7 @@ impl Launcher {
                 ui.close();
             }
             if let Some(d) = &g.install_dir {
-                if d.exists() && ui.button("📂  Ouvrir l'emplacement local").clicked() {
+                if d.exists() && ui.button("📂  Ouvrir le dossier local").clicked() {
                     actions.push(Action::OpenDir(d.clone()));
                     ui.close();
                 }

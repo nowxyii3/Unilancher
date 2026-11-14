@@ -121,6 +121,12 @@ pub struct Settings {
     pub last_played: Option<String>,
     /// Identifiants des jeux mis en favoris
     pub favorites: HashSet<String>,
+    /// Identifiants des bons plans mis en favoris
+    #[serde(default)]
+    pub favorite_deals: HashSet<String>,
+    /// Activer les alertes et notifications de nouveaux bons plans
+    #[serde(default = "default_true")]
+    pub deals_notifications: bool,
     /// Identifiants des jeux masqués de la bibliothèque principale
     pub hidden_games: HashSet<String>,
     /// Arguments de lancement personnalisés par jeu (ex: "-dx11 -novid")
@@ -206,6 +212,8 @@ impl Default for Settings {
             tracked_playtime: HashMap::new(),
             last_played: None,
             favorites: HashSet::new(),
+            favorite_deals: HashSet::new(),
+            deals_notifications: true,
             hidden_games: HashSet::new(),
             launch_args: HashMap::new(),
             game_notes: HashMap::new(),

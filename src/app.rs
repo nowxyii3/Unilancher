@@ -3,14 +3,14 @@ use crate::discord::{spawn_discord_rpc_worker, RpcEvent, RpcStatus};
 use crate::process::{launch_game, open_uri};
 use crate::scan;
 use crate::theme::{
-    apply_style, get_theme, ThemeColors, ACCENTS, BNET_C, DIM, DISCORD_C, EA_C, EPIC_C, GOG_C, GOLD,
-    GREEN, RED, STEAM_C, UBI_C, WHITE, XBOX_C,
+    apply_style, get_theme, ThemeColors, ACCENTS, BNET_C, DISCORD_C, EA_C, EPIC_C, GOG_C, GOLD,
+    GREEN, RED, STEAM_C, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, UBI_C, WHITE, XBOX_C,
 };
 use crate::types::{Action, SortMode, Tab, ViewMode};
 use crate::ui::components::{icon_square_button, sidebar_item, trunc, Icon};
 use eframe::egui::{
-    self, vec2, Align, Align2, Color32, ColorImage, CornerRadius, FontId, Id, Key, Layout, Margin,
-    Rect, RichText, Sense, Stroke, TextureHandle, TextureOptions,
+    self, pos2, vec2, Align, Align2, Color32, ColorImage, CornerRadius, FontId, Id, Key, Layout,
+    Margin, Rect, RichText, Sense, Stroke, TextureHandle, TextureOptions,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -71,6 +71,17 @@ pub struct Launcher {
     pub(crate) loading_deals: bool,
     pub(crate) deals_tx: mpsc::Sender<Vec<crate::deals::FreeDeal>>,
     pub(crate) deals_rx: mpsc::Receiver<Vec<crate::deals::FreeDeal>>,
+    pub(crate) deals_search: String,
+    pub(crate) deals_active_tab: crate::deals::DealsTab,
+    pub(crate) deals_platform_filter: Option<crate::deals::DealPlatform>,
+    pub(crate) deals_sort_mode: crate::deals::DealsSortMode,
+    pub(crate) selected_deal_modal: Option<crate::deals::FreeDeal>,
+    pub(crate) hero_featured_index: usize,
+    pub(crate) last_deals_sync: Option<u64>,
+    pub(crate) deal_textures: HashMap<String, Option<TextureHandle>>,
+    pub(crate) loading_deal_textures: HashSet<String>,
+    pub(crate) deal_tex_tx: mpsc::Sender<(String, ColorImage)>,
+    pub(crate) deal_tex_rx: mpsc::Receiver<(String, ColorImage)>,
     pub(crate) centered_once: bool,
 
     // Progression du scan multi-plateformes
@@ -112,10 +123,13 @@ impl Launcher {
         let (rpc_tx, rpc_rx) = mpsc::channel();
         let (rpc_status_tx, rpc_status_rx) = mpsc::channel();
         let (deals_tx, deals_rx) = mpsc::channel();
+        let (deal_tex_tx, deal_tex_rx) = mpsc::channel();
         let (scan_tx, scan_rx) = mpsc::channel();
         let (ach_tx, ach_rx) = mpsc::channel();
         let (details_tx, details_rx) = mpsc::channel();
         let perf_monitor = crate::performance::PerformanceMonitor::new();
+        let initial_deals = crate::deals::DealsTracker::load_cached_or_default();
+        let initial_sync = crate::deals::DealsTracker::load_cache_from_disk().map(|(ts, _)| ts);
 
         spawn_discord_rpc_worker(
             rpc_rx,
@@ -128,7 +142,11 @@ impl Launcher {
         let mut l = Self {
             settings,
             games: vec![],
-            tab: Tab::All,
+            tab: if std::env::args().any(|a| a == "deals" || a == "--tab=deals" || a == "--deals") {
+                Tab::Deals
+            } else {
+                Tab::All
+            },
             sort: SortMode::Playtime,
             view_mode: ViewMode::Grid,
             search: String::new(),
@@ -157,10 +175,21 @@ impl Launcher {
             spotlight_query: String::new(),
             spotlight_selected_idx: 0,
             spotlight_focus_needed: false,
-            deals: vec![],
+            deals: initial_deals,
             loading_deals: false,
             deals_tx,
             deals_rx,
+            deals_search: String::new(),
+            deals_active_tab: crate::deals::DealsTab::All,
+            deals_platform_filter: None,
+            deals_sort_mode: crate::deals::DealsSortMode::Featured,
+            selected_deal_modal: None,
+            hero_featured_index: 0,
+            last_deals_sync: initial_sync,
+            deal_textures: HashMap::new(),
+            loading_deal_textures: HashSet::new(),
+            deal_tex_tx,
+            deal_tex_rx,
             centered_once: false,
             scan_rx,
             scan_tx,
@@ -272,12 +301,66 @@ impl Launcher {
         self.loading_deals = true;
         let tx = self.deals_tx.clone();
         thread::spawn(move || {
-            if let Ok(deals) = crate::deals::DealsTracker::fetch_epic_free_games() {
-                let _ = tx.send(deals);
+            let deals = crate::deals::DealsTracker::fetch_all_deals();
+            let _ = tx.send(deals);
+        });
+    }
+
+    /// Charge la jaquette/bannière d'un bon plan de manière asynchrone avec cache disque
+    pub fn get_deal_texture(
+        &mut self,
+        ctx: &egui::Context,
+        deal: &crate::deals::FreeDeal,
+    ) -> Option<TextureHandle> {
+        if let Some(cached) = self.deal_textures.get(&deal.id) {
+            return cached.clone();
+        }
+        if self.loading_deal_textures.contains(&deal.id) {
+            return None;
+        }
+        let url = deal.image_url.clone()?;
+        self.loading_deal_textures.insert(deal.id.clone());
+
+        let tx = self.deal_tex_tx.clone();
+        let id = deal.id.clone();
+        let ctx_clone = ctx.clone();
+        let cache_dir = Settings::dir().join("deals_images");
+        let _ = std::fs::create_dir_all(&cache_dir);
+        let safe_name = format!("{}.bin", id.replace(|c: char| !c.is_alphanumeric(), "_"));
+        let cache_file = cache_dir.join(safe_name);
+
+        thread::spawn(move || {
+            let bytes = if cache_file.exists() {
+                std::fs::read(&cache_file).ok()
+            } else if let Ok(resp) = ureq::get(&url).timeout(Duration::from_secs(6)).call() {
+                let mut reader = resp.into_reader();
+                let mut buffer = Vec::new();
+                if std::io::copy(&mut reader, &mut buffer).is_ok() {
+                    let _ = std::fs::write(&cache_file, &buffer);
+                    Some(buffer)
+                } else {
+                    None
+                }
             } else {
-                let _ = tx.send(vec![]);
+                None
+            };
+
+            if let Some(raw) = bytes {
+                if let Ok(img) = image::load_from_memory(&raw) {
+                    let resized = img.thumbnail(640, 360);
+                    let rgba = resized.to_rgba8();
+                    let dims = [rgba.width() as usize, rgba.height() as usize];
+                    let color_image = ColorImage::from_rgba_unmultiplied(
+                        dims,
+                        rgba.as_flat_samples().as_slice(),
+                    );
+                    let _ = tx.send((id, color_image));
+                    ctx_clone.request_repaint();
+                }
             }
         });
+
+        None
     }
 
     /// Charge les jaquettes sur un thread d'arrière-plan pour garder l'UI à 144 FPS constants
@@ -677,7 +760,7 @@ impl Launcher {
         let accent = self.accent();
 
         egui::Panel::top("riot_title_bar")
-            .exact_size(38.0)
+            .exact_size(36.0)
             .resizable(false)
             .frame(
                 egui::Frame::new()
@@ -705,47 +788,81 @@ impl Launcher {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
 
-                    // ── Gauche : Logo + Titre ──
-                    ui.add_space(14.0);
-                    let (icon_r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+                    // ── Gauche : Logo + Titre + Badge version ──
+                    ui.add_space(12.0);
+                    let (icon_r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
                     let p = ui.painter();
-                    p.rect_filled(icon_r, CornerRadius::same(5), accent);
+                    p.rect_filled(icon_r, CornerRadius::same(6), accent);
                     let c = icon_r.center();
-                    let st = Stroke::new(1.8, WHITE);
+                    let st = Stroke::new(1.6, WHITE);
                     p.line_segment([c + vec2(-3.5, -4.0), c + vec2(-3.5, 1.5)], st);
                     p.line_segment([c + vec2(3.5, -4.0), c + vec2(3.5, 1.5)], st);
                     p.line_segment([c + vec2(-3.0, 3.5), c + vec2(3.0, 3.5)], st);
 
-                    ui.add_space(10.0);
-                    ui.label(RichText::new("UniLauncher").size(13.5).strong().color(WHITE));
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("Client").size(11.5).color(DIM));
+                    ui.add_space(9.0);
+                    ui.label(RichText::new("UniLauncher").size(13.0).strong().color(TEXT_PRIMARY));
+                    ui.add_space(6.0);
 
-                    // ── Centre : Raccourci recherche discret ──
+                    // Badge "CLIENT" discret
+                    let (client_r, _) = ui.allocate_exact_size(vec2(42.0, 16.0), Sense::hover());
+                    ui.painter().rect_filled(client_r, CornerRadius::same(4), th.surface_2);
+                    ui.painter().text(
+                        client_r.center(),
+                        Align2::CENTER_CENTER,
+                        "CLIENT",
+                        FontId::proportional(9.5),
+                        TEXT_TERTIARY,
+                    );
+
+                    // ── Centre : Raccourci recherche centré (Raycast/Arc style) ──
                     let total_w = ui.available_width();
-                    if total_w > 420.0 {
-                        ui.add_space(total_w * 0.18);
-                        let (search_pill, pill_resp) = ui.allocate_exact_size(vec2(230.0, 26.0), Sense::click());
+                    if total_w > 400.0 {
+                        let pill_w = 250.0;
+                        let offset = (total_w - pill_w - 140.0) / 2.0;
+                        if offset > 10.0 {
+                            ui.add_space(offset);
+                        }
+
+                        let (search_pill, pill_resp) = ui.allocate_exact_size(vec2(pill_w, 24.0), Sense::click());
                         let hov = pill_resp.hovered();
+
                         ui.painter().rect_filled(
                             search_pill,
-                            CornerRadius::same(13),
-                            if hov { th.card_hover } else { th.card },
+                            CornerRadius::same(12),
+                            if hov { th.surface_3 } else { th.surface_2 },
                         );
                         ui.painter().rect_stroke(
                             search_pill,
-                            CornerRadius::same(13),
-                            Stroke::new(1.0, if hov { accent.gamma_multiply(0.6) } else { th.card_border }),
+                            CornerRadius::same(12),
+                            Stroke::new(1.0, if hov { accent.gamma_multiply(0.65) } else { th.border_subtle }),
                             egui::StrokeKind::Inside,
                         );
+
+                        // Texte de recherche
                         let p = ui.painter();
                         p.text(
-                            search_pill.center(),
-                            Align2::CENTER_CENTER,
-                            "🔍 Rechercher (Alt + Espace)",
+                            pos2(search_pill.left() + 10.0, search_pill.center().y),
+                            Align2::LEFT_CENTER,
+                            "🔍  Rechercher...",
                             FontId::proportional(11.5),
-                            if hov { WHITE } else { DIM },
+                            if hov { TEXT_PRIMARY } else { TEXT_SECONDARY },
                         );
+
+                        // Badge raccourci clavier "Alt + Espace"
+                        let kbd_rect = Rect::from_center_size(
+                            pos2(search_pill.right() - 44.0, search_pill.center().y),
+                            vec2(72.0, 16.0),
+                        );
+                        p.rect_filled(kbd_rect, CornerRadius::same(4), th.surface_1);
+                        p.rect_stroke(kbd_rect, CornerRadius::same(4), Stroke::new(1.0, th.border_subtle), egui::StrokeKind::Inside);
+                        p.text(
+                            kbd_rect.center(),
+                            Align2::CENTER_CENTER,
+                            "Alt + Espace",
+                            FontId::proportional(9.5),
+                            TEXT_TERTIARY,
+                        );
+
                         if pill_resp.clicked() {
                             self.spotlight_open = true;
                             self.spotlight_focus_needed = true;
@@ -756,47 +873,47 @@ impl Launcher {
                     // ── Droite : Boutons de contrôle de fenêtre Riot Style ──
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         // 1. Bouton Fermer (✕) - Devient ROUGE vif au survol
-                        let (close_rect, close_resp) = ui.allocate_exact_size(vec2(48.0, 38.0), Sense::click());
+                        let (close_rect, close_resp) = ui.allocate_exact_size(vec2(46.0, 36.0), Sense::click());
                         let close_hov = close_resp.hovered();
                         if close_hov {
                             ui.painter().rect_filled(close_rect, CornerRadius::ZERO, Color32::from_rgb(232, 17, 35));
                         }
-                        let close_col = if close_hov { WHITE } else { DIM };
+                        let close_col = if close_hov { WHITE } else { TEXT_SECONDARY };
                         let c = close_rect.center();
-                        let st = Stroke::new(1.3, close_col);
-                        ui.painter().line_segment([c + vec2(-4.5, -4.5), c + vec2(4.5, 4.5)], st);
-                        ui.painter().line_segment([c + vec2(4.5, -4.5), c + vec2(-4.5, 4.5)], st);
+                        let st = Stroke::new(1.2, close_col);
+                        ui.painter().line_segment([c + vec2(-4.0, -4.0), c + vec2(4.0, 4.0)], st);
+                        ui.painter().line_segment([c + vec2(4.0, -4.0), c + vec2(-4.0, 4.0)], st);
                         if close_resp.clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
 
                         // 2. Bouton Maximiser / Restaurer (□ / ❐)
                         let is_max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                        let (max_rect, max_resp) = ui.allocate_exact_size(vec2(44.0, 38.0), Sense::click());
+                        let (max_rect, max_resp) = ui.allocate_exact_size(vec2(40.0, 36.0), Sense::click());
                         let max_hov = max_resp.hovered();
                         if max_hov {
-                            ui.painter().rect_filled(max_rect, CornerRadius::ZERO, th.card_hover);
+                            ui.painter().rect_filled(max_rect, CornerRadius::ZERO, th.surface_2);
                         }
-                        let max_col = if max_hov { WHITE } else { DIM };
+                        let max_col = if max_hov { TEXT_PRIMARY } else { TEXT_SECONDARY };
                         let c = max_rect.center();
                         if is_max {
                             ui.painter().rect_stroke(
-                                Rect::from_center_size(c + vec2(-2.0, 2.0), vec2(8.0, 8.0)),
+                                Rect::from_center_size(c + vec2(-2.0, 2.0), vec2(7.5, 7.5)),
                                 CornerRadius::ZERO,
-                                Stroke::new(1.2, max_col),
+                                Stroke::new(1.1, max_col),
                                 egui::StrokeKind::Inside,
                             );
                             ui.painter().rect_stroke(
-                                Rect::from_center_size(c + vec2(2.0, -2.0), vec2(8.0, 8.0)),
+                                Rect::from_center_size(c + vec2(2.0, -2.0), vec2(7.5, 7.5)),
                                 CornerRadius::ZERO,
-                                Stroke::new(1.2, max_col),
+                                Stroke::new(1.1, max_col),
                                 egui::StrokeKind::Inside,
                             );
                         } else {
                             ui.painter().rect_stroke(
-                                Rect::from_center_size(c, vec2(10.0, 10.0)),
+                                Rect::from_center_size(c, vec2(9.0, 9.0)),
                                 CornerRadius::ZERO,
-                                Stroke::new(1.2, max_col),
+                                Stroke::new(1.1, max_col),
                                 egui::StrokeKind::Inside,
                             );
                         }
@@ -805,16 +922,16 @@ impl Launcher {
                         }
 
                         // 3. Bouton Minimiser (—)
-                        let (min_rect, min_resp) = ui.allocate_exact_size(vec2(44.0, 38.0), Sense::click());
+                        let (min_rect, min_resp) = ui.allocate_exact_size(vec2(40.0, 36.0), Sense::click());
                         let min_hov = min_resp.hovered();
                         if min_hov {
-                            ui.painter().rect_filled(min_rect, CornerRadius::ZERO, th.card_hover);
+                            ui.painter().rect_filled(min_rect, CornerRadius::ZERO, th.surface_2);
                         }
-                        let min_col = if min_hov { WHITE } else { DIM };
+                        let min_col = if min_hov { TEXT_PRIMARY } else { TEXT_SECONDARY };
                         let c = min_rect.center();
                         ui.painter().line_segment(
-                            [c + vec2(-5.0, 0.0), c + vec2(5.0, 0.0)],
-                            Stroke::new(1.4, min_col),
+                            [c + vec2(-4.5, 0.0), c + vec2(4.5, 0.0)],
+                            Stroke::new(1.2, min_col),
                         );
                         if min_resp.clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
@@ -846,6 +963,13 @@ impl eframe::App for Launcher {
             self.loading_covers.remove(&id);
         }
 
+        // 1-deals. Intégration des jaquettes et bannières de bons plans
+        while let Ok((id, color_img)) = self.deal_tex_rx.try_recv() {
+            let tex = ctx.load_texture(format!("deal_{id}"), color_img, TextureOptions::LINEAR);
+            self.deal_textures.insert(id.clone(), Some(tex));
+            self.loading_deal_textures.remove(&id);
+        }
+
         // 1b. Réception du statut Discord RPC en direct
         while let Ok(st) = self.rpc_status_rx.try_recv() {
             self.rpc_status = st;
@@ -856,6 +980,17 @@ impl eframe::App for Launcher {
             self.loading_deals = false;
             if !deals.is_empty() {
                 self.deals = deals;
+                self.last_deals_sync = Some(crate::deals::current_unix_timestamp() as u64);
+                if self.settings.deals_notifications {
+                    let expiring_favs = self
+                        .deals
+                        .iter()
+                        .filter(|d| self.settings.favorite_deals.contains(&d.id) && d.expires_soon(48))
+                        .count();
+                    if expiring_favs > 0 {
+                        self.toast(format!("⚠️ {} offre(s) dans vos favoris expirent bientôt !", expiring_favs));
+                    }
+                }
             }
         }
 
@@ -935,6 +1070,7 @@ impl eframe::App for Launcher {
         }
 
         // 3. Raccourcis clavier globaux (F11 = Plein écran, F10 = Big Picture, Ctrl+F = Recherche, Échap = Fermer tiroir/recherche)
+        // 3. Raccourcis clavier globaux (F11 = Plein écran, F10 = Big Picture, Ctrl+F = Recherche, Échap = Fermer tiroir/recherche)
         ctx.input(|i| {
             if (i.modifiers.alt || i.modifiers.command) && i.key_pressed(Key::Space) {
                 self.spotlight_open = !self.spotlight_open;
@@ -998,7 +1134,7 @@ impl eframe::App for Launcher {
         self.render_riot_title_bar(&ctx, ui);
 
         let compact = self.settings.compact_sidebar;
-        let sidebar_width = if compact { 72.0 } else { 232.0 };
+        let sidebar_width = if compact { 68.0 } else { 236.0 };
 
         // Compteurs dynamiques pour la barre latérale
         let hidden_set = &self.settings.hidden_games;
@@ -1055,36 +1191,36 @@ impl eframe::App for Launcher {
             .count();
         let count_hidden = hidden_set.len();
 
-        // ── Barre latérale repensée ──
+        // ── Barre latérale repensée avec hiérarchie claire ──
         egui::Panel::left("sidebar")
             .exact_size(sidebar_width)
             .resizable(false)
             .frame(
                 egui::Frame::new()
-                    .fill(th.panel)
-                    .stroke(Stroke::new(1.0, th.panel_border))
-                    .inner_margin(Margin::symmetric(12, 18)),
+                    .fill(th.surface_1)
+                    .stroke(Stroke::new(1.0, th.border_subtle))
+                    .inner_margin(Margin::symmetric(10, 14)),
             )
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.spacing_mut().item_spacing.y = 4.0;
 
-                // En-tête Logo + Bouton Replier
+                // ── En-tête Logo + Bouton Replier ──
                 ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(vec2(38.0, 38.0), Sense::hover());
+                    let (rect, _) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
                     let p = ui.painter();
-                    p.rect_filled(rect, CornerRadius::same(10), accent);
+                    p.rect_filled(rect, CornerRadius::same(8), accent);
                     let c = rect.center();
-                    let st = Stroke::new(2.6, WHITE);
-                    p.line_segment([c + vec2(-5.5, -6.0), c + vec2(-5.5, 2.0)], st);
-                    p.line_segment([c + vec2(5.5, -6.0), c + vec2(5.5, 2.0)], st);
-                    p.line_segment([c + vec2(-4.5, 5.5), c + vec2(4.5, 5.5)], st);
+                    let st = Stroke::new(2.2, WHITE);
+                    p.line_segment([c + vec2(-5.0, -5.0), c + vec2(-5.0, 2.0)], st);
+                    p.line_segment([c + vec2(5.0, -5.0), c + vec2(5.0, 2.0)], st);
+                    p.line_segment([c + vec2(-4.0, 4.5), c + vec2(4.0, 4.5)], st);
 
                     if !compact {
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
-                            ui.label(RichText::new("UniLauncher").size(15.5).strong().color(WHITE));
-                            ui.label(RichText::new("Bibliothèque PC").size(11.0).color(DIM));
+                            ui.label(RichText::new("UniLauncher").size(14.0).strong().color(TEXT_PRIMARY));
+                            ui.label(RichText::new("Bibliothèque PC").size(10.5).color(TEXT_TERTIARY));
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if icon_square_button(ui, Icon::SidebarToggle, "Réduire le menu", false, th)
@@ -1097,6 +1233,7 @@ impl eframe::App for Launcher {
                 });
 
                 if compact {
+                    ui.add_space(2.0);
                     ui.vertical_centered(|ui| {
                         if icon_square_button(ui, Icon::SidebarToggle, "Étendre le menu", false, th) {
                             self.settings.compact_sidebar = false;
@@ -1105,48 +1242,105 @@ impl eframe::App for Launcher {
                     });
                 }
 
-                ui.add_space(12.0);
+                ui.add_space(10.0);
 
-                let mut nav_items = vec![
+                // Helper pour les séparateurs / en-têtes de catégorie
+                let render_cat_header = |ui: &mut egui::Ui, title: &str| {
+                    if !compact {
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(title)
+                                .size(9.5)
+                                .strong()
+                                .color(TEXT_TERTIARY),
+                        );
+                        ui.add_space(2.0);
+                    } else {
+                        ui.add_space(4.0);
+                        let (sep_r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+                        ui.painter().rect_filled(sep_r, CornerRadius::ZERO, th.border_subtle);
+                        ui.add_space(4.0);
+                    }
+                };
+
+                // ── GROUPE 1 : BIBLIOTHÈQUE ──
+                render_cat_header(ui, "BIBLIOTHÈQUE");
+
+                let library_items = [
                     (Tab::All, Icon::Library, accent, "Tous les jeux", Some(count_all)),
                     (Tab::Favorites, Icon::Star, GOLD, "Favoris", Some(count_fav)),
                 ];
+                for (tab, icon, col, label, count) in library_items {
+                    if sidebar_item(
+                        ui,
+                        Id::unique(("nav", tab)),
+                        icon,
+                        col,
+                        self.tab == tab,
+                        label,
+                        count,
+                        compact,
+                        th,
+                    ) {
+                        self.tab = tab;
+                    }
+                }
 
+                // ── GROUPE 2 : PLATEFORMES ──
+                let mut platform_items = vec![];
                 if count_steam > 0 || self.tab == Tab::Steam {
-                    nav_items.push((Tab::Steam, Icon::Steam, STEAM_C, "Steam", Some(count_steam)));
+                    platform_items.push((Tab::Steam, Icon::Steam, STEAM_C, "Steam", Some(count_steam)));
                 }
                 if count_epic > 0 || self.tab == Tab::Epic {
-                    nav_items.push((Tab::Epic, Icon::Epic, EPIC_C, "Epic Games", Some(count_epic)));
+                    platform_items.push((Tab::Epic, Icon::Epic, EPIC_C, "Epic Games", Some(count_epic)));
                 }
                 if count_gog > 0 || self.tab == Tab::Gog {
-                    nav_items.push((Tab::Gog, Icon::Gog, GOG_C, "GOG Galaxy", Some(count_gog)));
+                    platform_items.push((Tab::Gog, Icon::Gog, GOG_C, "GOG Galaxy", Some(count_gog)));
                 }
                 if count_ubisoft > 0 || self.tab == Tab::Ubisoft {
-                    nav_items.push((Tab::Ubisoft, Icon::Ubisoft, UBI_C, "Ubisoft Connect", Some(count_ubisoft)));
+                    platform_items.push((Tab::Ubisoft, Icon::Ubisoft, UBI_C, "Ubisoft Connect", Some(count_ubisoft)));
                 }
                 if count_ea > 0 || self.tab == Tab::Ea {
-                    nav_items.push((Tab::Ea, Icon::Ea, EA_C, "EA App", Some(count_ea)));
+                    platform_items.push((Tab::Ea, Icon::Ea, EA_C, "EA App", Some(count_ea)));
                 }
                 if count_bnet > 0 || self.tab == Tab::Battlenet {
-                    nav_items.push((Tab::Battlenet, Icon::Battlenet, BNET_C, "Battle.net", Some(count_bnet)));
+                    platform_items.push((Tab::Battlenet, Icon::Battlenet, BNET_C, "Battle.net", Some(count_bnet)));
                 }
                 if count_xbox > 0 || self.tab == Tab::Xbox {
-                    nav_items.push((Tab::Xbox, Icon::Xbox, XBOX_C, "Xbox", Some(count_xbox)));
+                    platform_items.push((Tab::Xbox, Icon::Xbox, XBOX_C, "Xbox", Some(count_xbox)));
                 }
                 if count_manual > 0 || self.tab == Tab::Manual {
-                    nav_items.push((Tab::Manual, Icon::Manual, accent, "Jeux manuels", Some(count_manual)));
+                    platform_items.push((Tab::Manual, Icon::Manual, accent, "Jeux manuels", Some(count_manual)));
                 }
 
-                if count_roms > 0 || self.tab == Tab::Emulators {
-                    nav_items.push((Tab::Emulators, Icon::Gamepad, STEAM_C, "Émulateurs & ROMs", Some(count_roms)));
-                } else {
-                    nav_items.push((Tab::Emulators, Icon::Gamepad, STEAM_C, "Émulateurs & ROMs", None));
+                if !platform_items.is_empty() {
+                    render_cat_header(ui, "PLATEFORMES");
+                    for (tab, icon, col, label, count) in platform_items {
+                        if sidebar_item(
+                            ui,
+                            Id::unique(("nav", tab)),
+                            icon,
+                            col,
+                            self.tab == tab,
+                            label,
+                            count,
+                            compact,
+                            th,
+                        ) {
+                            self.tab = tab;
+                        }
+                    }
                 }
 
-                nav_items.push((Tab::Deals, Icon::Gift, GREEN, "Bons Plans Gratuits", if self.deals.is_empty() { None } else { Some(self.deals.len()) }));
-                nav_items.push((Tab::Stats, Icon::Chart, Color32::from_rgb(56, 189, 248), "Statistiques", None));
+                // ── GROUPE 3 : RETRO & DÉCOUVERTES ──
+                render_cat_header(ui, "DÉCOUVRIR & RÉTRO");
 
-                for (tab, icon, col, label, count) in nav_items {
+                let retro_items = [
+                    (Tab::Emulators, Icon::Gamepad, STEAM_C, "Émulateurs & ROMs", if count_roms > 0 { Some(count_roms) } else { None }),
+                    (Tab::Deals, Icon::Gift, GREEN, "Bons Plans Gratuits", if self.deals.is_empty() { None } else { Some(self.deals.len()) }),
+                    (Tab::Stats, Icon::Chart, Color32::from_rgb(56, 189, 248), "Statistiques", None),
+                ];
+                for (tab, icon, col, label, count) in retro_items {
                     if sidebar_item(
                         ui,
                         Id::unique(("nav", tab)),
@@ -1167,7 +1361,7 @@ impl eframe::App for Launcher {
                         ui,
                         Id::unique("nav_hidden"),
                         Icon::EyeOff,
-                        DIM,
+                        TEXT_TERTIARY,
                         self.tab == Tab::Hidden,
                         "Masqués",
                         Some(count_hidden),
@@ -1178,9 +1372,8 @@ impl eframe::App for Launcher {
                     self.tab = Tab::Hidden;
                 }
 
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
+                // ── GROUPE 4 : SYSTÈME ──
+                render_cat_header(ui, "SYSTÈME");
 
                 if sidebar_item(
                     ui,
@@ -1200,7 +1393,7 @@ impl eframe::App for Launcher {
                     ui,
                     Id::unique("nav_fullscreen"),
                     Icon::Fullscreen,
-                    DIM,
+                    TEXT_SECONDARY,
                     self.is_fullscreen,
                     if self.is_fullscreen {
                         "Mode fenêtré (F11)"
@@ -1229,66 +1422,67 @@ impl eframe::App for Launcher {
                     self.tab = Tab::Settings;
                 }
 
-                // ── Carte de Statut en bas de la barre latérale (Jeu actif & Discord RPC) ──
-                let footer_h = if compact { 52.0 } else { 78.0 };
+                // ── Carte de Statut en bas de la barre latérale ──
+                let footer_h = if compact { 48.0 } else { 66.0 };
                 let rem = (ui.available_height() - footer_h).max(8.0);
                 ui.add_space(rem);
 
                 egui::Frame::new()
-                    .fill(th.card)
-                    .stroke(Stroke::new(1.0, th.card_border))
-                    .corner_radius(10.0)
-                    .inner_margin(Margin::symmetric(10, 10))
+                    .fill(th.surface_2)
+                    .stroke(Stroke::new(1.0, th.border_subtle))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::symmetric(10, 8))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         let (status_color, status_text, status_sub) = if let Some((ref name, started)) = self.active_game {
                             let mins = started.elapsed().as_secs() / 60;
-                            (GREEN, format!("EN JEU: {}", trunc(name, 16)), format!("Session : {mins} min"))
+                            (GREEN, format!("EN JEU: {}", trunc(name, 15)), format!("Session active : {mins} min"))
                         } else {
                             match &self.rpc_status {
                                 RpcStatus::Connected => (
                                     DISCORD_C,
-                                    "Discord : Connecté".to_string(),
-                                    "Rich Presence actif".to_string(),
+                                    "Discord RPC".to_string(),
+                                    "Connecté (statut actif)".to_string(),
                                 ),
                                 RpcStatus::WaitingDiscord => (
                                     GOLD,
-                                    "Discord : En attente...".to_string(),
-                                    "Lancez Discord pour lier".to_string(),
+                                    "Discord RPC".to_string(),
+                                    "En attente de Discord...".to_string(),
                                 ),
                                 RpcStatus::Connecting => (
                                     STEAM_C,
-                                    "Discord : Connexion...".to_string(),
-                                    "Recherche du socket".to_string(),
+                                    "Discord RPC".to_string(),
+                                    "Connexion au socket...".to_string(),
                                 ),
                                 RpcStatus::Error(_) => (
                                     RED,
-                                    "Discord : Erreur ID".to_string(),
-                                    "Vérifiez l'ID client".to_string(),
+                                    "Discord RPC".to_string(),
+                                    "Erreur Application ID".to_string(),
                                 ),
                                 RpcStatus::Disabled => (
-                                    DIM,
-                                    "Discord RPC désactivé".to_string(),
-                                    "Prêt à lancer un titre".to_string(),
+                                    TEXT_TERTIARY,
+                                    "Discord RPC".to_string(),
+                                    "Désactivé".to_string(),
                                 ),
                             }
                         };
 
                         if compact {
-                            let (r, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
-                            ui.painter().circle_filled(r.center(), 5.0, status_color);
+                            let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+                            ui.painter().circle_filled(r.center(), 4.0, status_color);
+                            ui.painter().circle_stroke(r.center(), 6.5, Stroke::new(1.0, status_color.gamma_multiply(0.35)));
+                            resp.on_hover_text(format!("{}\n{}", status_text, status_sub));
                         } else {
                             ui.horizontal(|ui| {
-                                let (r, _) =
-                                    ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
-                                ui.painter().circle_filled(r.center(), 4.0, status_color);
-                                ui.label(RichText::new(status_text).size(11.5).strong().color(WHITE));
+                                let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
+                                ui.painter().circle_filled(r.center(), 3.5, status_color);
+                                ui.label(RichText::new(status_text).size(11.0).strong().color(TEXT_PRIMARY));
                             });
-                            ui.add_space(2.0);
+                            ui.add_space(1.5);
                             ui.label(
                                 RichText::new(status_sub)
-                                    .size(11.0)
-                                    .color(DIM),
+                                    .size(10.5)
+                                    .color(TEXT_SECONDARY),
                             );
                         }
                     });
@@ -1300,8 +1494,8 @@ impl eframe::App for Launcher {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(th.bg)
-                    .inner_margin(Margin::symmetric(30, 24)),
+                    .fill(th.surface_0)
+                    .inner_margin(Margin::symmetric(28, 22)),
             )
             .show(ui, |ui| {
                 if self.tab == Tab::Settings {
@@ -1322,6 +1516,11 @@ impl eframe::App for Launcher {
             actions.extend(self.properties_modal_ui(&ctx));
         }
 
+        // ── Fiche Détaillée d'un Bon Plan (Modale Plein Écran) ──
+        if self.selected_deal_modal.is_some() {
+            self.deal_details_modal_ui(&ctx);
+        }
+
         for a in actions {
             self.apply(&ctx, a);
         }
@@ -1331,7 +1530,7 @@ impl eframe::App for Launcher {
             self.apply(&ctx, a);
         }
 
-        // ── Notification Toast sobre ──
+        // ── Notification Toast Moderne ──
         if self
             .status
             .as_ref()
@@ -1351,20 +1550,31 @@ impl eframe::App for Launcher {
             };
 
             egui::Area::new(Id::unique("toast_area"))
-                .anchor(Align2::RIGHT_BOTTOM, vec2(-24.0, -24.0))
+                .anchor(Align2::RIGHT_BOTTOM, vec2(-28.0, -28.0))
                 .order(egui::Order::Foreground)
                 .show(&ctx, |ui| {
                     egui::Frame::new()
-                        .fill(th.card_hover.gamma_multiply(alpha))
-                        .corner_radius(10.0)
-                        .stroke(Stroke::new(1.0, accent.gamma_multiply(alpha * 0.8)))
-                        .inner_margin(Margin::symmetric(16, 10))
+                        .fill(th.surface_3.gamma_multiply(alpha))
+                        .corner_radius(CornerRadius::same(8))
+                        .stroke(Stroke::new(1.0, th.border_default.gamma_multiply(alpha)))
+                        .shadow(egui::epaint::Shadow {
+                            offset: [0, 8],
+                            blur: 16,
+                            spread: 0,
+                            color: Color32::from_black_alpha((120.0 * alpha) as u8),
+                        })
+                        .inner_margin(Margin::symmetric(14, 9))
                         .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(msg)
-                                    .size(13.0)
-                                    .color(WHITE.gamma_multiply(alpha)),
-                            );
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                let (bar_rect, _) = ui.allocate_exact_size(vec2(2.5, 13.0), Sense::hover());
+                                ui.painter().rect_filled(bar_rect, CornerRadius::same(1), accent.gamma_multiply(alpha));
+                                ui.label(
+                                    RichText::new(msg)
+                                        .size(12.5)
+                                        .color(TEXT_PRIMARY.gamma_multiply(alpha)),
+                                );
+                            });
                         });
                 });
             ctx.request_repaint_after(Duration::from_millis(16));
@@ -1419,7 +1629,7 @@ impl Launcher {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("● HUD PERF").size(9.5 * cfg.scale).strong().color(accent));
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.label(RichText::new("F9").size(9.0 * cfg.scale).color(DIM));
+                                ui.label(RichText::new("F9").size(9.0 * cfg.scale).color(TEXT_TERTIARY));
                             });
                         });
                         ui.add_space(2.0);
@@ -1429,18 +1639,18 @@ impl Launcher {
                             ui.horizontal(|ui| {
                                 let fps_col = if metrics.fps >= 60.0 { GREEN } else if metrics.fps >= 30.0 { GOLD } else { RED };
                                 ui.label(RichText::new(format!("{:.0}", metrics.fps)).size(21.0 * cfg.scale).strong().color(fps_col));
-                                ui.label(RichText::new("FPS").size(10.0 * cfg.scale).strong().color(WHITE));
+                                ui.label(RichText::new("FPS").size(10.0 * cfg.scale).strong().color(TEXT_PRIMARY));
 
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     ui.label(
                                         RichText::new(format!("1% Low: {:.0}", metrics.one_percent_low_fps))
                                             .size(9.5 * cfg.scale)
-                                            .color(DIM),
+                                            .color(TEXT_SECONDARY),
                                     );
                                     ui.label(
                                         RichText::new(format!("Avg: {:.0}", metrics.avg_fps))
                                             .size(9.5 * cfg.scale)
-                                            .color(DIM),
+                                            .color(TEXT_SECONDARY),
                                     );
                                 });
                             });
@@ -1448,7 +1658,7 @@ impl Launcher {
 
                         if cfg.show_frametime {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("Frametime : {:.1} ms", metrics.frametime_ms)).size(10.0 * cfg.scale).monospace().color(DIM));
+                                ui.label(RichText::new(format!("Frametime : {:.1} ms", metrics.frametime_ms)).size(10.0 * cfg.scale).monospace().color(TEXT_TERTIARY));
                             });
                         }
 
@@ -1463,7 +1673,7 @@ impl Launcher {
                                     format!("{:.0}%  •  {}  •  {:.2} GHz", metrics.cpu_usage, temp_str, metrics.cpu_freq_mhz as f32 / 1000.0)
                                 };
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    ui.label(RichText::new(val_str).size(9.5 * cfg.scale).color(WHITE));
+                                    ui.label(RichText::new(val_str).size(9.5 * cfg.scale).color(TEXT_PRIMARY));
                                 });
                             });
                         }
@@ -1474,7 +1684,7 @@ impl Launcher {
                                 ui.label(RichText::new("GPU").size(10.0 * cfg.scale).strong().color(GREEN));
                                 let vram_gb = metrics.gpu_vram_used_mb as f32 / 1024.0;
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("{:.0}%  •  {:.1} Go VRAM", metrics.gpu_usage, vram_gb)).size(9.5 * cfg.scale).color(WHITE));
+                                    ui.label(RichText::new(format!("{:.0}%  •  {:.1} Go VRAM", metrics.gpu_usage, vram_gb)).size(9.5 * cfg.scale).color(TEXT_PRIMARY));
                                 });
                             });
                         }
@@ -1486,7 +1696,7 @@ impl Launcher {
                                 let used_gb = metrics.ram_used_mb as f32 / 1024.0;
                                 let tot_gb = metrics.ram_total_mb as f32 / 1024.0;
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("{:.1} / {:.0} Go", used_gb, tot_gb)).size(9.5 * cfg.scale).color(WHITE));
+                                    ui.label(RichText::new(format!("{:.1} / {:.0} Go", used_gb, tot_gb)).size(9.5 * cfg.scale).color(TEXT_PRIMARY));
                                 });
                             });
                         }
@@ -1525,10 +1735,17 @@ impl Launcher {
             .order(egui::Order::Tooltip)
             .fixed_pos(pos)
             .show(ctx, |ui| {
+                let th = self.theme();
                 egui::Frame::new()
-                    .fill(Color32::from_rgb(18, 18, 22))
-                    .stroke(Stroke::new(1.0, Color32::from_white_alpha(40)))
-                    .corner_radius(12.0)
+                    .fill(th.surface_2)
+                    .stroke(Stroke::new(1.0, th.border_default))
+                    .corner_radius(CornerRadius::same(12))
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 16],
+                        blur: 32,
+                        spread: 0,
+                        color: Color32::from_black_alpha(200),
+                    })
                     .inner_margin(Margin::same(16))
                     .show(ui, |ui| {
                         ui.set_width(modal_w);
@@ -1536,7 +1753,7 @@ impl Launcher {
 
                         ui.horizontal(|ui| {
                             let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("Capture");
-                            ui.label(RichText::new(fname).size(14.0).strong().color(WHITE));
+                            ui.label(RichText::new(fname).size(13.5).strong().color(TEXT_PRIMARY));
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if ui.button("✕ Fermer (Échap)").clicked() {
                                     self.selected_screenshot = None;

@@ -150,7 +150,7 @@ impl PerformanceMonitor {
 
                 // Estimation GPU (safe pour Windows sans hook DirectX)
                 let gpu_usage = (cpu_usage * 1.15 + (cur_fps / 144.0) * 35.0).clamp(5.0, 99.0);
-                let gpu_vram_used = (used_ram / 3).max(1024).min(8192);
+                let gpu_vram_used = (used_ram / 3).clamp(1024, 8192);
 
                 if let Ok(mut lock) = metrics_clone.lock() {
                     lock.cpu_usage = cpu_usage;
