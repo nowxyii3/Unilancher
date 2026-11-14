@@ -17,16 +17,273 @@ fn kv(line: &str) -> Option<(String, String)> {
     }
 }
 
+/// Détecte tous les disques durs et SSD disponibles sur le système Windows (C:\, D:\, E:\, etc.)
+pub fn get_available_drives() -> Vec<PathBuf> {
+    let mut drives = Vec::new();
+    for letter in b'C'..=b'Z' {
+        let p = PathBuf::from(format!("{}:\\", letter as char));
+        if p.exists() {
+            drives.push(p);
+        }
+    }
+    if drives.is_empty() {
+        drives.push(PathBuf::from(r"C:\"));
+    }
+    drives
+}
+
+#[derive(Clone, Debug)]
+pub struct ScanProgress {
+    pub stage: String,
+    pub games_found: usize,
+    pub percent: f32,
+    pub finished: bool,
+    pub games: Option<Vec<Game>>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PlatformStatus {
+    pub source: Source,
+    pub name: &'static str,
+    pub is_installed: bool,
+    pub path: Option<PathBuf>,
+    pub game_count: usize,
+}
+
+pub fn detect_installed_platforms(s: &Settings, games: &[Game]) -> Vec<PlatformStatus> {
+    let mut platforms = Vec::new();
+
+    // Steam
+    let steam_path = steam_root(s);
+    platforms.push(PlatformStatus {
+        source: Source::Steam,
+        name: "Steam",
+        is_installed: steam_path.is_some(),
+        path: steam_path,
+        game_count: games.iter().filter(|g| g.source == Source::Steam).count(),
+    });
+
+    // Epic Games
+    let epic_installed = Path::new(r"C:\Program Files (x86)\Epic Games\Launcher\Portal\Binaries\Win64\EpicGamesLauncher.exe").exists()
+        || Path::new(r"C:\Program Files\Epic Games\Launcher\Portal\Binaries\Win64\EpicGamesLauncher.exe").exists()
+        || Path::new(r"C:\ProgramData\Epic\EpicGamesLauncher").exists();
+    platforms.push(PlatformStatus {
+        source: Source::Epic,
+        name: "Epic Games",
+        is_installed: epic_installed,
+        path: None,
+        game_count: games.iter().filter(|g| g.source == Source::Epic).count(),
+    });
+
+    // GOG Galaxy
+    let gog_installed = Path::new(r"C:\Program Files (x86)\GOG Galaxy\GalaxyClient.exe").exists()
+        || Path::new(r"C:\Program Files\GOG Galaxy\GalaxyClient.exe").exists();
+    platforms.push(PlatformStatus {
+        source: Source::Gog,
+        name: "GOG Galaxy",
+        is_installed: gog_installed,
+        path: None,
+        game_count: games.iter().filter(|g| g.source == Source::Gog).count(),
+    });
+
+    // Ubisoft Connect
+    let ubi_installed = Path::new(r"C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\UbisoftConnect.exe").exists()
+        || Path::new(r"C:\Program Files\Ubisoft\Ubisoft Game Launcher\UbisoftConnect.exe").exists();
+    platforms.push(PlatformStatus {
+        source: Source::Ubisoft,
+        name: "Ubisoft Connect",
+        is_installed: ubi_installed,
+        path: None,
+        game_count: games.iter().filter(|g| g.source == Source::Ubisoft).count(),
+    });
+
+    // EA App
+    let ea_installed = Path::new(r"C:\Program Files\Electronic Arts\EA Desktop\EA Desktop\EADesktop.exe").exists()
+        || Path::new(r"C:\Program Files (x86)\Origin\Origin.exe").exists();
+    platforms.push(PlatformStatus {
+        source: Source::Ea,
+        name: "EA App",
+        is_installed: ea_installed,
+        path: None,
+        game_count: games.iter().filter(|g| g.source == Source::Ea).count(),
+    });
+
+    // Battle.net
+    let bnet_installed = Path::new(r"C:\Program Files (x86)\Battle.net\Battle.net.exe").exists()
+        || Path::new(r"C:\Program Files\Battle.net\Battle.net.exe").exists();
+    platforms.push(PlatformStatus {
+        source: Source::Battlenet,
+        name: "Battle.net",
+        is_installed: bnet_installed,
+        path: None,
+        game_count: games.iter().filter(|g| g.source == Source::Battlenet).count(),
+    });
+
+    // Xbox PC
+    let xbox_installed = Path::new(r"C:\XboxGames").exists() || Path::new(r"D:\XboxGames").exists();
+    platforms.push(PlatformStatus {
+        source: Source::Xbox,
+        name: "Xbox PC",
+        is_installed: xbox_installed,
+        path: None,
+        game_count: games.iter().filter(|g| g.source == Source::Xbox).count(),
+    });
+
+    platforms
+}
+
+pub fn scan_all_progressive<F>(s: &Settings, mut on_progress: F) -> Vec<Game>
+where
+    F: FnMut(ScanProgress),
+{
+    let mut all_games: Vec<Game> = Vec::new();
+    let mut seen_ids = HashSet::new();
+
+    on_progress(ScanProgress {
+        stage: "Scan des bibliothèques Steam (multi-disques)...".into(),
+        games_found: 0,
+        percent: 0.15,
+        finished: false,
+        games: None,
+    });
+    for g in scan_steam(s) {
+        if !g.is_broken() && seen_ids.insert(g.id.clone()) {
+            all_games.push(g);
+        }
+    }
+
+    on_progress(ScanProgress {
+        stage: format!("Scan Epic Games Store ({} jeux trouvés)...", all_games.len()),
+        games_found: all_games.len(),
+        percent: 0.32,
+        finished: false,
+        games: None,
+    });
+    for g in scan_epic(s) {
+        if !g.is_broken() && seen_ids.insert(g.id.clone()) {
+            all_games.push(g);
+        }
+    }
+
+    on_progress(ScanProgress {
+        stage: format!("Scan GOG Galaxy ({} jeux trouvés)...", all_games.len()),
+        games_found: all_games.len(),
+        percent: 0.45,
+        finished: false,
+        games: None,
+    });
+    for g in scan_gog(s) {
+        if !g.is_broken() && seen_ids.insert(g.id.clone()) {
+            all_games.push(g);
+        }
+    }
+
+    on_progress(ScanProgress {
+        stage: format!("Scan Ubisoft Connect ({} jeux trouvés)...", all_games.len()),
+        games_found: all_games.len(),
+        percent: 0.58,
+        finished: false,
+        games: None,
+    });
+    for g in scan_ubisoft(s) {
+        if !g.is_broken() && seen_ids.insert(g.id.clone()) {
+            all_games.push(g);
+        }
+    }
+
+    on_progress(ScanProgress {
+        stage: format!("Scan EA App & Origin ({} jeux trouvés)...", all_games.len()),
+        games_found: all_games.len(),
+        percent: 0.70,
+        finished: false,
+        games: None,
+    });
+    for g in scan_ea(s) {
+        if !g.is_broken() && seen_ids.insert(g.id.clone()) {
+            all_games.push(g);
+        }
+    }
+
+    on_progress(ScanProgress {
+        stage: format!("Scan Battle.net & Blizzard ({} jeux trouvés)...", all_games.len()),
+        games_found: all_games.len(),
+        percent: 0.82,
+        finished: false,
+        games: None,
+    });
+    for g in scan_battlenet(s) {
+        if !g.is_broken() && seen_ids.insert(g.id.clone()) {
+            all_games.push(g);
+        }
+    }
+
+    on_progress(ScanProgress {
+        stage: format!("Scan Xbox & dossiers configurés ({} jeux trouvés)...", all_games.len()),
+        games_found: all_games.len(),
+        percent: 0.94,
+        finished: false,
+        games: None,
+    });
+    for g in scan_xbox(s) {
+        if !g.is_broken() && seen_ids.insert(g.id.clone()) {
+            all_games.push(g);
+        }
+    }
+    for g in scan_custom_folders(s) {
+        if !g.is_broken() && seen_ids.insert(g.id.clone()) {
+            all_games.push(g);
+        }
+    }
+
+    all_games.sort_by_key(|g| g.name.to_lowercase());
+
+    on_progress(ScanProgress {
+        stage: format!("Scan complet terminé : {} jeux synchronisés", all_games.len()),
+        games_found: all_games.len(),
+        percent: 1.0,
+        finished: true,
+        games: Some(all_games.clone()),
+    });
+
+    all_games
+}
+
+#[allow(dead_code)]
 pub fn scan_all(s: &Settings) -> Vec<Game> {
-    let mut v = scan_steam(s);
-    v.extend(scan_epic(s));
-    v.extend(scan_gog(s));
-    v.extend(scan_ubisoft(s));
-    v.extend(scan_ea(s));
-    v.extend(scan_xbox(s));
-    v.extend(scan_custom_folders(s));
-    v.sort_by_key(|g| g.name.to_lowercase());
-    v
+    scan_all_progressive(s, |_| {})
+}
+
+pub fn start_progressive_scan(s: Settings, tx: std::sync::mpsc::Sender<ScanProgress>) {
+    std::thread::spawn(move || {
+        scan_all_progressive(&s, |prog| {
+            let _ = tx.send(prog);
+        });
+    });
+}
+
+#[cfg(windows)]
+pub fn steam_root_registry() -> Option<PathBuf> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey(r"Software\Valve\Steam") {
+        if let Ok(path) = key.get_value::<String, _>("SteamPath") {
+            let p = PathBuf::from(path);
+            if p.join("steamapps").exists() {
+                return Some(p);
+            }
+        }
+    }
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    if let Ok(key) = hklm.open_subkey(r"SOFTWARE\WOW6432Node\Valve\Steam") {
+        if let Ok(path) = key.get_value::<String, _>("InstallPath") {
+            let p = PathBuf::from(path);
+            if p.join("steamapps").exists() {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
 
 pub fn steam_root(s: &Settings) -> Option<PathBuf> {
@@ -36,6 +293,10 @@ pub fn steam_root(s: &Settings) -> Option<PathBuf> {
         if p.exists() {
             return Some(p);
         }
+    }
+    #[cfg(windows)]
+    if let Some(p) = steam_root_registry() {
+        return Some(p);
     }
     let mut c: Vec<PathBuf> = vec![
         r"C:\Program Files (x86)\Steam".into(),
@@ -284,6 +545,18 @@ pub fn scan_steam(s: &Settings) -> Vec<Game> {
                     }
                 }
             }
+        }
+    }
+
+    // Détecte également les bibliothèques SteamLibrary sur tous les lecteurs du système
+    for d in get_available_drives() {
+        let p1 = d.join("SteamLibrary");
+        let p2 = d.join("Steam");
+        if p1.join("steamapps").exists() && !libs.contains(&p1) {
+            libs.push(p1);
+        }
+        if p2.join("steamapps").exists() && !libs.contains(&p2) {
+            libs.push(p2);
         }
     }
 
@@ -570,6 +843,85 @@ pub fn scan_ea(_s: &Settings) -> Vec<Game> {
     out
 }
 
+pub fn scan_battlenet(_s: &Settings) -> Vec<Game> {
+    let mut out = Vec::new();
+    let mut candidates = vec![
+        PathBuf::from(r"C:\Program Files (x86)\Battle.net"),
+        PathBuf::from(r"C:\Program Files\Battle.net"),
+    ];
+
+    for d in get_available_drives() {
+        let d_bnet = d.join("Battle.net");
+        let d_games = d.join("Games");
+        let d_blizzard = d.join("Blizzard");
+        if d_bnet.exists() && !candidates.contains(&d_bnet) {
+            candidates.push(d_bnet);
+        }
+        if d_games.exists() && !candidates.contains(&d_games) {
+            candidates.push(d_games);
+        }
+        if d_blizzard.exists() && !candidates.contains(&d_blizzard) {
+            candidates.push(d_blizzard);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        if let Ok(uninstall_key) = hklm.open_subkey(r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall") {
+            for sub in uninstall_key.enum_keys().flatten() {
+                if let Ok(sub_k) = uninstall_key.open_subkey(&sub) {
+                    let publisher: String = sub_k.get_value("Publisher").unwrap_or_default();
+                    if publisher.to_lowercase().contains("blizzard") {
+                        if let Ok(loc) = sub_k.get_value::<String, _>("InstallLocation") {
+                            let loc_p = PathBuf::from(loc);
+                            if loc_p.is_dir() && !candidates.contains(&loc_p) {
+                                candidates.push(loc_p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut seen_ids = HashSet::new();
+    for dir in candidates {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if !p.is_dir() { continue };
+            let folder_name = entry.file_name().to_string_lossy().to_string();
+            if folder_name.eq_ignore_ascii_case("Battle.net") || folder_name.eq_ignore_ascii_case("Agent") {
+                continue;
+            }
+            let id = format!("bnet:{folder_name}");
+            if seen_ids.contains(&id) { continue };
+
+            if let Some(exe) = find_main_executable(&p) {
+                seen_ids.insert(id.clone());
+                let cover = find_folder_cover(&p);
+                let size_bytes = calculate_folder_size(&p);
+                out.push(Game {
+                    id,
+                    name: folder_name,
+                    source: Source::Battlenet,
+                    install_dir: Some(p),
+                    exe: Some(exe),
+                    launch_uri: None,
+                    cover_path: cover,
+                    playtime_mins: 0,
+                    size_bytes,
+                });
+            }
+        }
+    }
+
+    out
+}
+
 pub fn scan_xbox(_s: &Settings) -> Vec<Game> {
     let mut out = Vec::new();
     let candidates = [
@@ -813,4 +1165,122 @@ pub fn download_cover_auto(g: &Game, cache_dir: &Path) -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Recherche les captures d'écran associées à un jeu (Steam userdata, dossier du jeu, captures Windows)
+pub fn find_game_screenshots(g: &Game, s: &Settings) -> Vec<PathBuf> {
+    let mut screenshots = Vec::new();
+    let mut seen = HashSet::new();
+
+    // 1. Steam Screenshots dans userdata/<user>/760/remote/<appid>/screenshots/
+    if let Some(appid) = g.id.strip_prefix("steam:") {
+        if let Some(root) = steam_root(s) {
+            let userdata = root.join("userdata");
+            if let Ok(entries) = fs::read_dir(userdata) {
+                for u in entries.flatten() {
+                    let s_dir = u.path().join("760").join("remote").join(appid).join("screenshots");
+                    if let Ok(rd) = fs::read_dir(s_dir) {
+                        for pic in rd.flatten() {
+                            let p = pic.path();
+                            if p.is_file() {
+                                if let Some(ext) = p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) {
+                                    if (ext == "jpg" || ext == "png" || ext == "jpeg") && seen.insert(p.clone()) {
+                                        screenshots.push(p);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Dossier Screenshots / Captures dans le dossier d'installation du jeu
+    if let Some(ref install_dir) = g.install_dir {
+        for sub in &["Screenshots", "screenshots", "Captures", "captures", "Screen", "screens"] {
+            let sub_path = install_dir.join(sub);
+            if let Ok(rd) = fs::read_dir(sub_path) {
+                for pic in rd.flatten() {
+                    let p = pic.path();
+                    if p.is_file() {
+                        if let Some(ext) = p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) {
+                            if (ext == "jpg" || ext == "png" || ext == "jpeg") && seen.insert(p.clone()) {
+                                screenshots.push(p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Tri pour avoir les plus récentes en premier si possible
+    screenshots.sort_by(|a, b| {
+        let ma = fs::metadata(a).and_then(|m| m.modified()).ok();
+        let mb = fs::metadata(b).and_then(|m| m.modified()).ok();
+        mb.cmp(&ma)
+    });
+
+    screenshots
+}
+
+/// Récupère la description et la date de sortie d'un jeu Steam depuis le Store officiel
+pub fn fetch_steam_game_details(appid: &str) -> Option<(String, String)> {
+    let url = format!("https://store.steampowered.com/api/appdetails?appids={appid}&l=french");
+    let resp = ureq::get(&url).timeout(Duration::from_secs(4)).call().ok()?;
+    let val = resp.into_json::<serde_json::Value>().ok()?;
+    let data = val.get(appid)?.get("data")?;
+
+    let raw_desc = data
+        .get("short_description")
+        .and_then(|v| v.as_str())
+        .or_else(|| data.get("about_the_game").and_then(|v| v.as_str()))
+        .unwrap_or("");
+
+    let description = raw_desc
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&")
+        .trim()
+        .to_string();
+
+    let release_date = data
+        .get("release_date")
+        .and_then(|v| v.get("date"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Some((description, release_date))
+}
+
+/// Désinstalle un jeu via son launcher officiel (ou la désinstallation Windows enregistrée)
+pub fn uninstall_game(g: &Game) -> Result<(), String> {
+    match g.source {
+        Source::Steam => {
+            if let Some(appid) = g.id.strip_prefix("steam:") {
+                let uri = format!("steam://uninstall/{appid}");
+                let _ = std::process::Command::new("cmd")
+                    .args(["/c", "start", &uri])
+                    .spawn();
+                return Ok(());
+            }
+        }
+        Source::Epic => {
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", "com.epicgames.launcher://apps?action=open"])
+                .spawn();
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "ms-settings:appsfeatures"])
+        .spawn();
+
+    Ok(())
 }

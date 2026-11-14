@@ -1,7 +1,7 @@
 use crate::app::Launcher;
 use crate::config::{Game, Source};
 use crate::scan;
-use crate::theme::{DIM, EA_C, EPIC_C, GOG_C, GOLD, GREEN, STEAM_C, UBI_C, WHITE, XBOX_C};
+use crate::theme::{BNET_C, DIM, EA_C, EPIC_C, GOG_C, GOLD, GREEN, RED, STEAM_C, UBI_C, WHITE, XBOX_C};
 use crate::types::format_playtime;
 use crate::ui::components::trunc;
 use eframe::egui::{
@@ -75,6 +75,7 @@ impl Launcher {
                             (Source::Gog, GOG_C),
                             (Source::Ubisoft, UBI_C),
                             (Source::Ea, EA_C),
+                            (Source::Battlenet, BNET_C),
                             (Source::Xbox, XBOX_C),
                             (Source::Manual, accent),
                         ];
@@ -186,6 +187,89 @@ impl Launcher {
                             }
                         });
                 });
+
+                ui.add_space(16.0);
+
+                // Module Game Performance & Télémétrie en Direct
+                let perf = self.perf_monitor.snapshot();
+                egui::Frame::new()
+                    .fill(th.card)
+                    .stroke(Stroke::new(1.0, th.card_border))
+                    .corner_radius(12.0)
+                    .inner_margin(Margin::same(18))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("🚀 Game Performance & Télémétrie PC en Direct").size(16.0).strong().color(WHITE));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let mut overlay_active = self.settings.overlay.enabled;
+                                if ui.checkbox(&mut overlay_active, "Activer l'Overlay In-Game (F9)").changed() {
+                                    self.settings.overlay.enabled = overlay_active;
+                                    self.settings.save();
+                                }
+                            });
+                        });
+                        ui.add_space(2.0);
+                        ui.label(RichText::new("Surveillance des ressources CPU, GPU, RAM, FPS et Frametime temps réel sans hook DirectX").size(11.5).color(DIM));
+                        ui.add_space(12.0);
+
+                        ui.columns(4, |cols| {
+                            // 1. CPU
+                            egui::Frame::new()
+                                .fill(th.panel)
+                                .stroke(Stroke::new(1.0, th.card_border))
+                                .corner_radius(8.0)
+                                .inner_margin(Margin::same(12))
+                                .show(&mut cols[0], |ui| {
+                                    ui.label(RichText::new("CPU").size(12.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new(format!("{:.1}%", perf.cpu_usage)).size(20.0).strong().color(WHITE));
+                                    let temp_s = perf.cpu_temp_c.map(|t| format!("{:.0}°C", t)).unwrap_or_else(|| "N/A".into());
+                                    ui.label(RichText::new(format!("Fréq : {:.2} GHz  •  Temp : {}", perf.cpu_freq_mhz as f32 / 1000.0, temp_s)).size(10.5).color(DIM));
+                                });
+
+                            // 2. GPU
+                            egui::Frame::new()
+                                .fill(th.panel)
+                                .stroke(Stroke::new(1.0, th.card_border))
+                                .corner_radius(8.0)
+                                .inner_margin(Margin::same(12))
+                                .show(&mut cols[1], |ui| {
+                                    ui.label(RichText::new("GPU").size(12.0).strong().color(GREEN));
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new(format!("{:.1}%", perf.gpu_usage)).size(20.0).strong().color(WHITE));
+                                    ui.label(RichText::new(format!("VRAM : {:.1} / {:.0} Go", perf.gpu_vram_used_mb as f32 / 1024.0, perf.gpu_vram_total_mb as f32 / 1024.0)).size(10.5).color(DIM));
+                                });
+
+                            // 3. RAM
+                            egui::Frame::new()
+                                .fill(th.panel)
+                                .stroke(Stroke::new(1.0, th.card_border))
+                                .corner_radius(8.0)
+                                .inner_margin(Margin::same(12))
+                                .show(&mut cols[2], |ui| {
+                                    ui.label(RichText::new("RAM").size(12.0).strong().color(GOLD));
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new(format!("{:.1} Go", perf.ram_used_mb as f32 / 1024.0)).size(20.0).strong().color(WHITE));
+                                    ui.label(RichText::new(format!("Dispo : {:.1} Go  •  Total : {:.0} Go", perf.ram_avail_mb as f32 / 1024.0, perf.ram_total_mb as f32 / 1024.0)).size(10.5).color(DIM));
+                                });
+
+                            // 4. FPS & Frametime
+                            egui::Frame::new()
+                                .fill(th.panel)
+                                .stroke(Stroke::new(1.0, th.card_border))
+                                .corner_radius(8.0)
+                                .inner_margin(Margin::same(12))
+                                .show(&mut cols[3], |ui| {
+                                    ui.label(RichText::new("EN JEU / FPS").size(12.0).strong().color(accent));
+                                    ui.add_space(2.0);
+                                    let fps_c = if perf.fps >= 60.0 { GREEN } else if perf.fps >= 30.0 { GOLD } else { RED };
+                                    ui.label(RichText::new(format!("{:.0} FPS", perf.fps)).size(20.0).strong().color(fps_c));
+                                    ui.label(RichText::new(format!("Avg : {:.0}  •  1% Low : {:.0}  •  {:.1} ms", perf.avg_fps, perf.one_percent_low_fps, perf.frametime_ms)).size(10.0).color(DIM));
+                                });
+                        });
+                    });
+
                 ui.add_space(20.0);
             });
     }

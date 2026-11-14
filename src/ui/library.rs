@@ -26,6 +26,7 @@ impl Launcher {
             Tab::Gog => ("GOG Galaxy", "Titres détectés via GOG Galaxy"),
             Tab::Ubisoft => ("Ubisoft Connect", "Titres détectés via Ubisoft Connect"),
             Tab::Ea => ("EA App / Origin", "Titres détectés via EA App / Origin"),
+            Tab::Battlenet => ("Battle.net", "Titres détectés via l'écosystème Battle.net / Blizzard"),
             Tab::Xbox => ("Xbox / Game Pass", "Titres détectés via Xbox PC"),
             Tab::Manual => ("Jeux manuels", "Exécutables autonomes et jeux indépendants"),
             Tab::Emulators => ("Émulateurs & ROMs", "Jeux rétros et consoles émulées"),
@@ -95,6 +96,35 @@ impl Launcher {
                 search_bar(ui, &mut self.search, &mut self.focus_search, accent, th);
             });
         });
+
+        // ── Indicateur de Progression du Scan Multi-Plateformes en Temps Réel ──
+        if let Some(prog) = &self.scan_progress {
+            ui.add_space(8.0);
+            egui::Frame::new()
+                .fill(accent.gamma_multiply(0.12))
+                .stroke(Stroke::new(1.0, accent.gamma_multiply(0.40)))
+                .corner_radius(10.0)
+                .inner_margin(Margin::symmetric(14, 8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🔄").size(13.0));
+                        let desc = if prog.games_found > 0 {
+                            format!("{} ({} trouvés)", prog.stage, prog.games_found)
+                        } else {
+                            prog.stage.clone()
+                        };
+                        ui.label(RichText::new(desc).size(12.5).strong().color(WHITE));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let pct_str = format!("{:.0}%", prog.percent * 100.0);
+                            ui.label(RichText::new(pct_str).size(12.0).strong().color(accent));
+                            let pb = egui::ProgressBar::new(prog.percent)
+                                .desired_width(120.0)
+                                .fill(accent);
+                            ui.add(pb);
+                        });
+                    });
+                });
+        }
 
         ui.add_space(14.0);
 
@@ -272,7 +302,8 @@ impl Launcher {
                 match self.view_mode {
                     ViewMode::Grid => {
                         ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(16.0, 18.0);
+                            let spacing = self.settings.grid_spacing.clamp(8.0, 36.0);
+                            ui.spacing_mut().item_spacing = vec2(spacing, spacing + 2.0);
                             for &i in &filtered {
                                 let g = self.games[i].clone();
                                 let fav = favs.contains(&g.id);
@@ -297,8 +328,10 @@ impl Launcher {
 
                                 if star_clicked {
                                     actions.push(Action::Fav(g.id.clone()));
-                                } else if resp.clicked() {
+                                } else if resp.double_clicked() {
                                     actions.push(Action::Launch(i));
+                                } else if resp.clicked() {
+                                    actions.push(Action::OpenDetails(g.id.clone()));
                                 }
 
                                 self.attach_game_context_menu(&resp, &g, i, fav, &mut actions);
@@ -382,8 +415,8 @@ impl Launcher {
                 ui.close();
             }
 
-            // Bouton Propriétés & Configuration
-            if ui.button("⚙  Propriétés & Configuration…").clicked() {
+            // Bouton Fiche détaillée & Propriétés
+            if ui.button("📋  Fiche détaillée du jeu & Propriétés…").clicked() {
                 actions.push(Action::OpenDetails(g.id.clone()));
                 ui.close();
             }

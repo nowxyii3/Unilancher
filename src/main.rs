@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod achievements;
 mod app;
 mod config;
 mod deals;
 mod discord;
 mod emulators;
+mod performance;
 mod process;
 mod scan;
 mod theme;

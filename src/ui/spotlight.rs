@@ -1,6 +1,6 @@
 use crate::app::Launcher;
 use crate::config::Source;
-use crate::theme::{DIM, EA_C, EPIC_C, GOG_C, STEAM_C, UBI_C, WHITE, XBOX_C};
+use crate::theme::{BNET_C, DIM, EA_C, EPIC_C, GOG_C, STEAM_C, UBI_C, WHITE, XBOX_C};
 use crate::types::{format_playtime, Action};
 use crate::ui::components::stat_chip;
 use eframe::egui::{
@@ -158,6 +158,7 @@ impl Launcher {
                                         Source::Gog => GOG_C,
                                         Source::Ubisoft => UBI_C,
                                         Source::Ea => EA_C,
+                                        Source::Battlenet => BNET_C,
                                         Source::Xbox => XBOX_C,
                                         Source::Manual => accent,
                                     };

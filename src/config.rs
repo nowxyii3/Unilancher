@@ -12,6 +12,7 @@ pub enum Source {
     Gog,
     Ubisoft,
     Ea,
+    Battlenet,
     Xbox,
     Manual,
 }
@@ -24,6 +25,7 @@ impl Source {
             Source::Gog => "GOG",
             Source::Ubisoft => "UBISOFT",
             Source::Ea => "EA",
+            Source::Battlenet => "BATTLE.NET",
             Source::Xbox => "XBOX",
             Source::Manual => "MANUEL",
         }
@@ -59,7 +61,7 @@ impl Game {
             .unwrap_or(false);
         match self.source {
             Source::Steam => dir_missing,
-            Source::Epic | Source::Gog | Source::Ubisoft | Source::Ea | Source::Xbox => {
+            Source::Epic | Source::Gog | Source::Ubisoft | Source::Ea | Source::Battlenet | Source::Xbox => {
                 dir_missing || self.exe.as_ref().map(|e| !e.exists()).unwrap_or(false)
             }
             Source::Manual => self.exe.as_ref().map(|e| !e.exists()).unwrap_or(true),
@@ -127,6 +129,44 @@ pub struct Settings {
     pub game_notes: HashMap<String, String>,
     /// Tags / Catégories associés à chaque jeu
     pub game_tags: HashMap<String, Vec<String>>,
+
+    /// Nombre de sessions de jeu lancées (clé = id du jeu)
+    #[serde(default)]
+    pub session_counts: HashMap<String, u32>,
+    /// Timestamp Unix de la dernière session terminée (clé = id du jeu)
+    #[serde(default)]
+    pub last_played_dates: HashMap<String, u64>,
+    /// Descriptions / synopsis du jeu (clé = id du jeu)
+    #[serde(default)]
+    pub game_descriptions: HashMap<String, String>,
+    /// Date de sortie du jeu (clé = id du jeu)
+    #[serde(default)]
+    pub game_release_dates: HashMap<String, String>,
+    /// Clé API Steam Web pour les succès
+    #[serde(default)]
+    pub steam_api_key: String,
+    /// SteamID de l'utilisateur pour les succès
+    #[serde(default)]
+    pub steam_user_id: String,
+    /// Configuration de l'overlay de performances
+    #[serde(default)]
+    pub overlay: crate::performance::OverlayConfig,
+    /// Espacement de la grille de jeux
+    #[serde(default = "default_grid_spacing")]
+    pub grid_spacing: f32,
+    /// Afficher le temps de jeu sur les cartes
+    #[serde(default = "default_true")]
+    pub show_card_playtime: bool,
+    /// Afficher les badges de plateformes sur les cartes
+    #[serde(default = "default_true")]
+    pub show_card_badges: bool,
+    /// Animations et transitions activées
+    #[serde(default = "default_true")]
+    pub enable_animations: bool,
+}
+
+fn default_grid_spacing() -> f32 {
+    16.0
 }
 
 fn default_card_scale() -> f32 {
@@ -170,6 +210,17 @@ impl Default for Settings {
             launch_args: HashMap::new(),
             game_notes: HashMap::new(),
             game_tags: HashMap::new(),
+            session_counts: HashMap::new(),
+            last_played_dates: HashMap::new(),
+            game_descriptions: HashMap::new(),
+            game_release_dates: HashMap::new(),
+            steam_api_key: String::new(),
+            steam_user_id: String::new(),
+            overlay: crate::performance::OverlayConfig::default(),
+            grid_spacing: default_grid_spacing(),
+            show_card_playtime: true,
+            show_card_badges: true,
+            enable_animations: true,
         }
     }
 }

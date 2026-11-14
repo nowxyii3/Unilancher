@@ -9,6 +9,7 @@ pub enum Tab {
     Gog,
     Ubisoft,
     Ea,
+    Battlenet,
     Xbox,
     Manual,
     Emulators,
@@ -24,6 +25,17 @@ pub enum SortMode {
     Name,
     Favorites,
     SizeOnDisk,
+}
+
+impl SortMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortMode::Playtime => "Temps de jeu",
+            SortMode::Name => "Nom (A-Z)",
+            SortMode::Favorites => "Favoris en premier",
+            SortMode::SizeOnDisk => "Taille sur le disque",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

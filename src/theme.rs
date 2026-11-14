@@ -22,6 +22,7 @@ pub const EPIC_C: Color32 = Color32::from_rgb(228, 228, 235);
 pub const GOG_C: Color32 = Color32::from_rgb(168, 85, 247);
 pub const UBI_C: Color32 = Color32::from_rgb(0, 112, 244);
 pub const EA_C: Color32 = Color32::from_rgb(239, 68, 68);
+pub const BNET_C: Color32 = Color32::from_rgb(0, 174, 255);
 pub const XBOX_C: Color32 = Color32::from_rgb(16, 124, 65);
 pub const DISCORD_C: Color32 = Color32::from_rgb(88, 101, 242);
 

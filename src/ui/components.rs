@@ -1,6 +1,6 @@
 use crate::config::{Game, Source};
 use crate::theme::{
-    ThemeColors, DIM, EA_C, EPIC_C, GOG_C, GOLD, PANEL, RED, STEAM_C, UBI_C, WHITE, XBOX_C,
+    ThemeColors, BNET_C, DIM, EA_C, EPIC_C, GOG_C, GOLD, PANEL, RED, STEAM_C, UBI_C, WHITE, XBOX_C,
 };
 use crate::types::format_playtime;
 use eframe::egui::{
@@ -20,6 +20,7 @@ pub enum Icon {
     Gog,
     Ubisoft,
     Ea,
+    Battlenet,
     Xbox,
     Manual,
     EyeOff,
@@ -401,6 +402,15 @@ pub fn draw_icon(p: &egui::Painter, icon: Icon, c: Pos2, col: Color32) {
             p.add(Shape::closed_line(pts, st));
             p.line_segment([c + vec2(-3.0, 1.5), c + vec2(3.0, 1.5)], st);
         }
+        Icon::Battlenet => {
+            p.circle_stroke(c, 7.5, st);
+            p.circle_filled(c, 2.2, col);
+            for k in 0..3 {
+                let a = k as f32 * (2.0 * PI / 3.0);
+                let (s, co) = a.sin_cos();
+                p.line_segment([c, c + vec2(co * 7.0, s * 7.0)], Stroke::new(1.8, col));
+            }
+        }
         Icon::Xbox => {
             p.circle_stroke(c, 8.0, st);
             p.line_segment([c + vec2(-4.5, -4.5), c + vec2(4.5, 4.5)], Stroke::new(2.0, col));
@@ -699,6 +709,7 @@ pub fn game_card(
         Source::Gog => GOG_C,
         Source::Ubisoft => UBI_C,
         Source::Ea => EA_C,
+        Source::Battlenet => BNET_C,
         Source::Xbox => XBOX_C,
         Source::Manual => accent,
     };

@@ -2,7 +2,7 @@ use crate::app::Launcher;
 use crate::config::Settings;
 use crate::discord::{RpcEvent, RpcStatus};
 use crate::process::open_uri;
-use crate::theme::{ACCENTS, DIM, GOLD, GREEN, RED, STEAM_C, WHITE};
+use crate::theme::{ACCENTS, BNET_C, DIM, EA_C, EPIC_C, GOG_C, GOLD, GREEN, RED, STEAM_C, UBI_C, WHITE, XBOX_C};
 use crate::ui::components::{modern_action_button, row, section, toggle, Icon};
 use eframe::egui::{self, vec2, Align, Id, Layout, Margin, RichText, Sense, Stroke, Ui};
 
@@ -312,7 +312,57 @@ impl Launcher {
                     );
                 });
 
-                section(ui, "Dossiers de détection & Bibliothèques", th, |ui| {
+                section(ui, "Plateformes Détectées sur Windows & Scan Multi-Disques", th, |ui| {
+                    ui.label(RichText::new("État de détection des lanceurs et magasins").size(13.5).strong().color(WHITE));
+                    ui.add_space(2.0);
+                    ui.label(RichText::new("UniLauncher vérifie le registre et tous les disques (C:, D:, E:...) pour récupérer automatiquement vos jeux").size(11.5).color(DIM));
+                    ui.add_space(10.0);
+
+                    let platforms = crate::scan::detect_installed_platforms(&self.settings, &self.games);
+                    ui.columns(2, |cols| {
+                        for (idx, p) in platforms.iter().enumerate() {
+                            let col = &mut cols[idx % 2];
+                            let p_color = match p.source {
+                                crate::config::Source::Steam => STEAM_C,
+                                crate::config::Source::Epic => EPIC_C,
+                                crate::config::Source::Gog => GOG_C,
+                                crate::config::Source::Ubisoft => UBI_C,
+                                crate::config::Source::Ea => EA_C,
+                                crate::config::Source::Battlenet => BNET_C,
+                                crate::config::Source::Xbox => XBOX_C,
+                                crate::config::Source::Manual => accent,
+                            };
+
+                            egui::Frame::new()
+                                .fill(th.card)
+                                .stroke(Stroke::new(1.0, th.card_border))
+                                .corner_radius(8.0)
+                                .inner_margin(Margin::symmetric(12, 10))
+                                .show(col, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+                                        ui.painter().circle_filled(r.center(), 4.5, if p.is_installed { GREEN } else { DIM });
+
+                                        ui.label(RichText::new(p.name).size(13.0).strong().color(WHITE));
+
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if p.is_installed {
+                                                let tag = format!("{} titres", p.game_count);
+                                                ui.label(RichText::new(tag).size(11.5).strong().color(p_color));
+                                            } else {
+                                                ui.label(RichText::new("Non détecté").size(11.0).color(DIM));
+                                            }
+                                        });
+                                    });
+                                });
+                            col.add_space(6.0);
+                        }
+                    });
+
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+
                     ui.label(RichText::new("Chemin d'installation Steam").size(13.0).color(WHITE));
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
@@ -417,6 +467,265 @@ impl Launcher {
                                 self.settings.accent = i;
                                 changed = true;
                             }
+                        }
+                    });
+                });
+
+                section(ui, "Personnalisation de la Bibliothèque & Interface", th, |ui| {
+                    ui.label(RichText::new("Disposition et Apparence des Cartes").size(13.5).strong().color(WHITE));
+                    ui.add_space(2.0);
+                    ui.label(RichText::new("Ajustez la taille, l'espacement et les détails visibles dans votre catalogue").size(11.5).color(DIM));
+                    ui.add_space(10.0);
+
+                    // 1. Taille des cartes
+                    row(
+                        ui,
+                        "Échelle des cartes de jeu",
+                        "Ajustez le format d'affichage des jaquettes dans la grille.",
+                        |ui| {
+                            let mut scale = self.settings.card_scale;
+                            if ui.add(egui::Slider::new(&mut scale, 0.70..=1.40).text("x").step_by(0.05)).changed() {
+                                self.settings.card_scale = scale;
+                                changed = true;
+                            }
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    // 2. Espacement
+                    row(
+                        ui,
+                        "Espacement entre les cartes (Grid Spacing)",
+                        "Définit la distance en pixels entre chaque jaquette de la grille.",
+                        |ui| {
+                            let mut spacing = self.settings.grid_spacing;
+                            if ui.add(egui::Slider::new(&mut spacing, 8.0..=32.0).text("px").step_by(2.0)).changed() {
+                                self.settings.grid_spacing = spacing;
+                                changed = true;
+                            }
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    // 3. Mode d'affichage par défaut
+                    row(
+                        ui,
+                        "Mode d'affichage de la bibliothèque",
+                        "Choisissez entre une grille moderne de jaquettes ou une liste compacte.",
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.selectable_label(self.view_mode == crate::types::ViewMode::Grid, "🔲 Grille").clicked() {
+                                    self.view_mode = crate::types::ViewMode::Grid;
+                                }
+                                if ui.selectable_label(self.view_mode == crate::types::ViewMode::List, "📄 Liste").clicked() {
+                                    self.view_mode = crate::types::ViewMode::List;
+                                }
+                            });
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    // 4. Tri par défaut
+                    row(
+                        ui,
+                        "Ordre de tri par défaut",
+                        "Critère de tri appliqué à l'ouverture de votre catalogue.",
+                        |ui| {
+                            egui::ComboBox::from_id_salt("settings_sort_combo")
+                                .selected_text(self.sort.label())
+                                .show_ui(ui, |ui| {
+                                    for &s in &[
+                                        crate::types::SortMode::Playtime,
+                                        crate::types::SortMode::Name,
+                                        crate::types::SortMode::Favorites,
+                                        crate::types::SortMode::SizeOnDisk,
+                                    ] {
+                                        if ui.selectable_value(&mut self.sort, s, s.label()).clicked() {
+                                            changed = true;
+                                        }
+                                    }
+                                });
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    // 5. Informations visibles
+                    row(
+                        ui,
+                        "Afficher le temps de jeu sur les cartes",
+                        "Indique le temps total passé sur le jeu directement sur la jaquette.",
+                        |ui| {
+                            changed |= toggle(
+                                ui,
+                                "tog_card_playtime",
+                                &mut self.settings.show_card_playtime,
+                                accent,
+                            )
+                            .changed();
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    row(
+                        ui,
+                        "Afficher les badges de plateforme sur les cartes",
+                        "Affiche la pastille du lanceur d'origine (Steam, Epic, Battle.net, etc.).",
+                        |ui| {
+                            changed |= toggle(
+                                ui,
+                                "tog_card_badges",
+                                &mut self.settings.show_card_badges,
+                                accent,
+                            )
+                            .changed();
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    row(
+                        ui,
+                        "Animations et transitions fluides",
+                        "Active les effets de survol, transitions douces et respirations visuelles.",
+                        |ui| {
+                            changed |= toggle(
+                                ui,
+                                "tog_enable_animations",
+                                &mut self.settings.enable_animations,
+                                accent,
+                            )
+                            .changed();
+                        },
+                    );
+                });
+
+                section(ui, "Game Performance & Overlay Flottant (F9)", th, |ui| {
+                    row(
+                        ui,
+                        "Activer l'Overlay en jeu (Raccourci : F9)",
+                        "Affiche un widget discret au-dessus de vos jeux sans toucher aux DLL ni déclencher d'anti-triche.",
+                        |ui| {
+                            changed |= toggle(
+                                ui,
+                                "tog_overlay_enabled",
+                                &mut self.settings.overlay.enabled,
+                                accent,
+                            )
+                            .changed();
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    row(
+                        ui,
+                        "Position de l'overlay à l'écran",
+                        "Choisissez le coin de l'écran où afficher le moniteur de performances.",
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                for (pos, lbl) in [
+                                    (crate::performance::OverlayPosition::TopRight, "Haut Droit"),
+                                    (crate::performance::OverlayPosition::TopLeft, "Haut Gauche"),
+                                    (crate::performance::OverlayPosition::BottomRight, "Bas Droit"),
+                                    (crate::performance::OverlayPosition::BottomLeft, "Bas Gauche"),
+                                ] {
+                                    if ui.selectable_label(self.settings.overlay.position == pos, lbl).clicked() {
+                                        self.settings.overlay.position = pos;
+                                        changed = true;
+                                    }
+                                }
+                            });
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    row(
+                        ui,
+                        "Opacité / Transparence de l'overlay",
+                        "Règle le niveau de transparence du fond pour ne pas gêner en jeu.",
+                        |ui| {
+                            let mut op = self.settings.overlay.opacity;
+                            if ui.add(egui::Slider::new(&mut op, 0.20..=1.00).text("%").custom_formatter(|n, _| format!("{:.0}%", n * 100.0))).changed() {
+                                self.settings.overlay.opacity = op;
+                                changed = true;
+                            }
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    row(
+                        ui,
+                        "Échelle / Taille de l'overlay",
+                        "Ajustez la taille d'affichage générale du widget HUD.",
+                        |ui| {
+                            let mut sc = self.settings.overlay.scale;
+                            if ui.add(egui::Slider::new(&mut sc, 0.75..=1.50).text("x").step_by(0.05)).changed() {
+                                self.settings.overlay.scale = sc;
+                                changed = true;
+                            }
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    ui.label(RichText::new("Métriques affichées sur l'overlay :").size(12.5).strong().color(WHITE));
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        changed |= ui.checkbox(&mut self.settings.overlay.show_fps, "FPS & 1% Low").changed();
+                        changed |= ui.checkbox(&mut self.settings.overlay.show_frametime, "Frametime (ms)").changed();
+                        changed |= ui.checkbox(&mut self.settings.overlay.show_cpu, "CPU (Usage, GHz, Temp)").changed();
+                        changed |= ui.checkbox(&mut self.settings.overlay.show_gpu, "GPU (Usage, VRAM)").changed();
+                        changed |= ui.checkbox(&mut self.settings.overlay.show_ram, "RAM (Go utilisée)").changed();
+                    });
+                });
+
+                section(ui, "Succès Steam & API Web Officielle", th, |ui| {
+                    ui.label(RichText::new("Configuration du suivi des succès Steam").size(13.5).strong().color(WHITE));
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new("UniLauncher récupère déjà le catalogue officiel de succès. Pour synchroniser vos trophées personnels privés, indiquez votre clé API Steam et votre SteamID64.")
+                            .size(11.5)
+                            .color(DIM),
+                    );
+                    ui.add_space(10.0);
+
+                    ui.label(RichText::new("Clé Web API Steam").size(12.5).color(WHITE));
+                    let w = (ui.available_width() - 140.0).max(120.0);
+                    ui.horizontal(|ui| {
+                        changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.settings.steam_api_key)
+                                    .hint_text("Collez ici votre clé API Steam (facultatif)...")
+                                    .password(true)
+                                    .margin(Margin::symmetric(10, 8))
+                                    .desired_width(w),
+                            )
+                            .changed();
+                        if ui.button("Obtenir ma clé").clicked() {
+                            let _ = open_uri("https://steamcommunity.com/dev/apikey");
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("SteamID64 de votre compte").size(12.5).color(WHITE));
+                    ui.horizontal(|ui| {
+                        changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.settings.steam_user_id)
+                                    .hint_text("76561198... (facultatif si profil public)")
+                                    .margin(Margin::symmetric(10, 8))
+                                    .desired_width(w),
+                            )
+                            .changed();
+                        if ui.button("Trouver mon ID").clicked() {
+                            let _ = open_uri("https://steamid.io/");
                         }
                     });
                 });

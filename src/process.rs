@@ -30,7 +30,7 @@ pub fn launch_game(
         return spawn_and_track(exe, &custom_args, g.id.clone(), tx);
     }
     match g.source {
-        Source::Manual | Source::Gog | Source::Ubisoft | Source::Ea | Source::Xbox => {
+        Source::Manual | Source::Gog | Source::Ubisoft | Source::Ea | Source::Battlenet | Source::Xbox => {
             if let Some(exe) = &g.exe {
                 if exe.exists() {
                     return spawn_and_track(exe, &custom_args, g.id.clone(), tx);

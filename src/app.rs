@@ -3,7 +3,7 @@ use crate::discord::{spawn_discord_rpc_worker, RpcEvent, RpcStatus};
 use crate::process::{launch_game, open_uri};
 use crate::scan;
 use crate::theme::{
-    apply_style, get_theme, ThemeColors, ACCENTS, DIM, DISCORD_C, EA_C, EPIC_C, GOG_C, GOLD,
+    apply_style, get_theme, ThemeColors, ACCENTS, BNET_C, DIM, DISCORD_C, EA_C, EPIC_C, GOG_C, GOLD,
     GREEN, RED, STEAM_C, UBI_C, WHITE, XBOX_C,
 };
 use crate::types::{Action, SortMode, Tab, ViewMode};
@@ -57,6 +57,7 @@ pub struct Launcher {
     pub(crate) selected_game_id: Option<String>,
     pub(crate) properties_tab: usize,
     pub(crate) show_discord_guide: bool,
+    #[allow(dead_code)]
     pub(crate) new_tag_input: String,
 
     // Spotlight search
@@ -71,6 +72,37 @@ pub struct Launcher {
     pub(crate) deals_tx: mpsc::Sender<Vec<crate::deals::FreeDeal>>,
     pub(crate) deals_rx: mpsc::Receiver<Vec<crate::deals::FreeDeal>>,
     pub(crate) centered_once: bool,
+
+    // Progression du scan multi-plateformes
+    pub(crate) scan_rx: mpsc::Receiver<crate::scan::ScanProgress>,
+    pub(crate) scan_tx: mpsc::Sender<crate::scan::ScanProgress>,
+    pub(crate) scan_progress: Option<crate::scan::ScanProgress>,
+    pub(crate) is_scanning: bool,
+
+    // Succès & Trophées
+    pub(crate) cached_achievements: HashMap<String, Option<crate::achievements::GameAchievements>>,
+    pub(crate) loading_achievements: HashSet<String>,
+    pub(crate) ach_tx: mpsc::Sender<(String, Option<crate::achievements::GameAchievements>)>,
+    pub(crate) ach_rx: mpsc::Receiver<(String, Option<crate::achievements::GameAchievements>)>,
+    pub(crate) achievements_filter: usize,
+
+    // Détails du jeu (description, date de sortie)
+    pub(crate) details_tx: mpsc::Sender<(String, Option<(String, String)>)>,
+    pub(crate) details_rx: mpsc::Receiver<(String, Option<(String, String)>)>,
+    pub(crate) loading_details: HashSet<String>,
+
+    // Captures d'écran & Lightbox
+    pub(crate) cached_screenshots: HashMap<String, Vec<PathBuf>>,
+    pub(crate) selected_screenshot: Option<PathBuf>,
+
+    // Performance & Overlay en jeu
+    pub(crate) perf_monitor: crate::performance::PerformanceMonitor,
+
+    // Édition d'informations d'un jeu
+    pub(crate) edit_info_open: bool,
+    pub(crate) edit_name_input: String,
+    pub(crate) edit_desc_input: String,
+    pub(crate) edit_date_input: String,
 }
 
 impl Launcher {
@@ -80,6 +112,10 @@ impl Launcher {
         let (rpc_tx, rpc_rx) = mpsc::channel();
         let (rpc_status_tx, rpc_status_rx) = mpsc::channel();
         let (deals_tx, deals_rx) = mpsc::channel();
+        let (scan_tx, scan_rx) = mpsc::channel();
+        let (ach_tx, ach_rx) = mpsc::channel();
+        let (details_tx, details_rx) = mpsc::channel();
+        let perf_monitor = crate::performance::PerformanceMonitor::new();
 
         spawn_discord_rpc_worker(
             rpc_rx,
@@ -126,6 +162,25 @@ impl Launcher {
             deals_tx,
             deals_rx,
             centered_once: false,
+            scan_rx,
+            scan_tx,
+            scan_progress: None,
+            is_scanning: false,
+            cached_achievements: HashMap::new(),
+            loading_achievements: HashSet::new(),
+            ach_tx,
+            ach_rx,
+            achievements_filter: 0,
+            details_tx,
+            details_rx,
+            loading_details: HashSet::new(),
+            cached_screenshots: HashMap::new(),
+            selected_screenshot: None,
+            perf_monitor,
+            edit_info_open: false,
+            edit_name_input: String::new(),
+            edit_desc_input: String::new(),
+            edit_date_input: String::new(),
         };
 
         apply_style(&cc.egui_ctx, l.accent(), l.settings.theme);
@@ -163,15 +218,29 @@ impl Launcher {
         let _ = self.rpc_tx.send(RpcEvent::InMenu(visible_count));
     }
 
+    pub fn start_scan(&mut self) {
+        if self.is_scanning {
+            return;
+        }
+        self.is_scanning = true;
+        self.scan_progress = Some(crate::scan::ScanProgress {
+            stage: "Démarrage de la détection multi-plateformes...".into(),
+            games_found: self.games.len(),
+            percent: 0.05,
+            finished: false,
+            games: None,
+        });
+        crate::scan::start_progressive_scan(self.settings.clone(), self.scan_tx.clone());
+    }
+
     pub fn refresh(&mut self) {
-        let mut g = scan::scan_all(&self.settings);
-        for mut mg in self.settings.manual_games.clone() {
+        let mut g = self.settings.manual_games.clone();
+        for mg in &mut g {
             if mg.cover_path.is_none() {
                 if let Some(dir) = &mg.install_dir {
                     mg.cover_path = scan::find_folder_cover(dir);
                 }
             }
-            g.push(mg);
         }
 
         // Scanner également les dossiers de ROMs d'émulateurs
@@ -187,6 +256,7 @@ impl Launcher {
         if self.active_game.is_none() {
             self.update_rpc_menu();
         }
+        self.start_scan();
     }
 
     pub fn rescan_roms(&mut self) {
@@ -308,6 +378,7 @@ impl Launcher {
                     Tab::Gog => g.source == Source::Gog,
                     Tab::Ubisoft => g.source == Source::Ubisoft,
                     Tab::Ea => g.source == Source::Ea,
+                    Tab::Battlenet => g.source == Source::Battlenet,
                     Tab::Xbox => g.source == Source::Xbox,
                     Tab::Manual => g.source == Source::Manual && !g.id.starts_with("rom:"),
                     Tab::Emulators => g.id.starts_with("rom:"),
@@ -391,6 +462,13 @@ impl Launcher {
             match launch_game(&g, &self.settings, self.playtime_tx.clone()) {
                 Ok(()) => {
                     self.settings.last_played = Some(g.id.clone());
+                    let count = self.settings.session_counts.entry(g.id.clone()).or_insert(0);
+                    *count += 1;
+                    let now_sec = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    self.settings.last_played_dates.insert(g.id.clone(), now_sec);
                     self.settings.save();
                     self.active_game = Some((g.name.clone(), Instant::now()));
                     let _ = self
@@ -781,6 +859,35 @@ impl eframe::App for Launcher {
             }
         }
 
+        // 1d. Réception de la progression du scan multi-plateformes en direct
+        while let Ok(prog) = self.scan_rx.try_recv() {
+            if prog.finished {
+                self.is_scanning = false;
+                if let Some(mut games) = prog.games {
+                    for mg in &self.settings.manual_games {
+                        if !games.iter().any(|g| g.id == mg.id) {
+                            games.push(mg.clone());
+                        }
+                    }
+                    let emus = crate::emulators::detect_installed_emulators();
+                    for folder in &self.settings.custom_scan_folders {
+                        let roms = crate::emulators::scan_roms_folder(folder, &emus);
+                        for r in roms {
+                            if !games.iter().any(|g| g.id == r.id) {
+                                games.push(r);
+                            }
+                        }
+                    }
+                    games.sort_by_key(|g| g.name.to_lowercase());
+                    self.games = games;
+                }
+                self.toast(format!("Bibliothèque synchronisée : {} jeux détectés", self.games.len()));
+                self.scan_progress = None;
+            } else {
+                self.scan_progress = Some(prog);
+            }
+        }
+
         // 2. Réception de la fin de session d'un jeu
         while let Ok((game_id, mins_added)) = self.playtime_rx.try_recv() {
             self.active_game = None;
@@ -795,10 +902,35 @@ impl eframe::App for Launcher {
                 }
             }
             if mins_added > 0 {
-                let entry = self.settings.tracked_playtime.entry(game_id).or_insert(0);
+                let entry = self.settings.tracked_playtime.entry(game_id.clone()).or_insert(0);
                 *entry += mins_added;
+                let now_sec = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                self.settings.last_played_dates.insert(game_id, now_sec);
                 self.settings.save();
                 self.toast(format!("Session terminée (+{mins_added} min comptabilisées)"));
+            }
+        }
+
+        // Réception des succès en arrière-plan
+        while let Ok((id, achs)) = self.ach_rx.try_recv() {
+            self.loading_achievements.remove(&id);
+            self.cached_achievements.insert(id, achs);
+        }
+
+        // Réception des métadonnées du store (description, date de sortie)
+        while let Ok((id, details)) = self.details_rx.try_recv() {
+            self.loading_details.remove(&id);
+            if let Some((desc, date)) = details {
+                if !desc.is_empty() && !self.settings.game_descriptions.contains_key(&id) {
+                    self.settings.game_descriptions.insert(id.clone(), desc);
+                }
+                if !date.is_empty() && !self.settings.game_release_dates.contains_key(&id) {
+                    self.settings.game_release_dates.insert(id.clone(), date);
+                }
+                self.settings.save();
             }
         }
 
@@ -815,6 +947,12 @@ impl eframe::App for Launcher {
             }
             if i.key_pressed(Key::F10) {
                 self.is_big_picture = !self.is_big_picture;
+            }
+            if i.key_pressed(Key::F9) {
+                self.settings.overlay.enabled = !self.settings.overlay.enabled;
+                self.settings.save();
+                let state = if self.settings.overlay.enabled { "activé" } else { "désactivé" };
+                self.toast(format!("Overlay de performance {state} (F9)"));
             }
             if i.modifiers.ctrl && i.key_pressed(Key::F) {
                 self.focus_search = true;
@@ -894,6 +1032,11 @@ impl eframe::App for Launcher {
             .games
             .iter()
             .filter(|g| !hidden_set.contains(&g.id) && g.source == Source::Ea)
+            .count();
+        let count_bnet = self
+            .games
+            .iter()
+            .filter(|g| !hidden_set.contains(&g.id) && g.source == Source::Battlenet)
             .count();
         let count_xbox = self
             .games
@@ -983,6 +1126,9 @@ impl eframe::App for Launcher {
                 }
                 if count_ea > 0 || self.tab == Tab::Ea {
                     nav_items.push((Tab::Ea, Icon::Ea, EA_C, "EA App", Some(count_ea)));
+                }
+                if count_bnet > 0 || self.tab == Tab::Battlenet {
+                    nav_items.push((Tab::Battlenet, Icon::Battlenet, BNET_C, "Battle.net", Some(count_bnet)));
                 }
                 if count_xbox > 0 || self.tab == Tab::Xbox {
                     nav_items.push((Tab::Xbox, Icon::Xbox, XBOX_C, "Xbox", Some(count_xbox)));
@@ -1223,5 +1369,194 @@ impl eframe::App for Launcher {
                 });
             ctx.request_repaint_after(Duration::from_millis(16));
         }
+
+        // ── Overlay In-Game de Performances (F9) ──
+        if self.settings.overlay.enabled {
+            self.render_performance_overlay(&ctx);
+        }
+
+        // ── Lightbox de Capture d'écran Plein Écran ──
+        if self.selected_screenshot.is_some() {
+            self.render_screenshot_lightbox(&ctx);
+        }
+    }
+}
+
+impl Launcher {
+    // ───────────────────────────── Overlay In-Game de Performances ─────────────────────────────
+    pub fn render_performance_overlay(&self, ctx: &egui::Context) {
+        let metrics = self.perf_monitor.snapshot();
+        let cfg = &self.settings.overlay;
+        let screen = ctx.content_rect();
+
+        let base_w = 205.0 * cfg.scale;
+        let pos = match cfg.position {
+            crate::performance::OverlayPosition::TopLeft => egui::pos2(screen.min.x + 20.0, screen.min.y + 48.0),
+            crate::performance::OverlayPosition::TopRight => egui::pos2(screen.max.x - base_w - 20.0, screen.min.y + 48.0),
+            crate::performance::OverlayPosition::BottomLeft => egui::pos2(screen.min.x + 20.0, screen.max.y - 180.0 * cfg.scale),
+            crate::performance::OverlayPosition::BottomRight => egui::pos2(screen.max.x - base_w - 20.0, screen.max.y - 180.0 * cfg.scale),
+        };
+
+        let alpha = (cfg.opacity.clamp(0.15, 1.0) * 255.0) as u8;
+        let bg = Color32::from_black_alpha(alpha);
+        let border = Color32::from_white_alpha((alpha as f32 * 0.25) as u8);
+        let accent = self.accent();
+
+        egui::Area::new(Id::unique("perf_ingame_overlay"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(bg)
+                    .stroke(Stroke::new(1.0, border))
+                    .corner_radius(8.0)
+                    .inner_margin(Margin::symmetric((10.0 * cfg.scale).round() as i8, (8.0 * cfg.scale).round() as i8))
+                    .show(ui, |ui| {
+                        ui.set_width(base_w);
+                        ui.spacing_mut().item_spacing.y = 3.0 * cfg.scale;
+
+                        // En-tête HUD discret
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("● HUD PERF").size(9.5 * cfg.scale).strong().color(accent));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.label(RichText::new("F9").size(9.0 * cfg.scale).color(DIM));
+                            });
+                        });
+                        ui.add_space(2.0);
+
+                        // FPS & Frametime
+                        if cfg.show_fps {
+                            ui.horizontal(|ui| {
+                                let fps_col = if metrics.fps >= 60.0 { GREEN } else if metrics.fps >= 30.0 { GOLD } else { RED };
+                                ui.label(RichText::new(format!("{:.0}", metrics.fps)).size(21.0 * cfg.scale).strong().color(fps_col));
+                                ui.label(RichText::new("FPS").size(10.0 * cfg.scale).strong().color(WHITE));
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(
+                                        RichText::new(format!("1% Low: {:.0}", metrics.one_percent_low_fps))
+                                            .size(9.5 * cfg.scale)
+                                            .color(DIM),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("Avg: {:.0}", metrics.avg_fps))
+                                            .size(9.5 * cfg.scale)
+                                            .color(DIM),
+                                    );
+                                });
+                            });
+                        }
+
+                        if cfg.show_frametime {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("Frametime : {:.1} ms", metrics.frametime_ms)).size(10.0 * cfg.scale).monospace().color(DIM));
+                            });
+                        }
+
+                        // CPU
+                        if cfg.show_cpu {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("CPU").size(10.0 * cfg.scale).strong().color(Color32::from_rgb(56, 189, 248)));
+                                let temp_str = metrics.cpu_temp_c.map(|t| format!("{:.0}°C", t)).unwrap_or_else(|| "".into());
+                                let val_str = if temp_str.is_empty() {
+                                    format!("{:.0}%  •  {:.2} GHz", metrics.cpu_usage, metrics.cpu_freq_mhz as f32 / 1000.0)
+                                } else {
+                                    format!("{:.0}%  •  {}  •  {:.2} GHz", metrics.cpu_usage, temp_str, metrics.cpu_freq_mhz as f32 / 1000.0)
+                                };
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(RichText::new(val_str).size(9.5 * cfg.scale).color(WHITE));
+                                });
+                            });
+                        }
+
+                        // GPU
+                        if cfg.show_gpu {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("GPU").size(10.0 * cfg.scale).strong().color(GREEN));
+                                let vram_gb = metrics.gpu_vram_used_mb as f32 / 1024.0;
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("{:.0}%  •  {:.1} Go VRAM", metrics.gpu_usage, vram_gb)).size(9.5 * cfg.scale).color(WHITE));
+                                });
+                            });
+                        }
+
+                        // RAM
+                        if cfg.show_ram {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("RAM").size(10.0 * cfg.scale).strong().color(GOLD));
+                                let used_gb = metrics.ram_used_mb as f32 / 1024.0;
+                                let tot_gb = metrics.ram_total_mb as f32 / 1024.0;
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("{:.1} / {:.0} Go", used_gb, tot_gb)).size(9.5 * cfg.scale).color(WHITE));
+                                });
+                            });
+                        }
+                    });
+            });
+    }
+
+    // ───────────────────────────── Lightbox Capture d'écran Plein Écran ─────────────────────────────
+    pub fn render_screenshot_lightbox(&mut self, ctx: &egui::Context) {
+        let Some(p) = self.selected_screenshot.clone() else {
+            return;
+        };
+        let screen = ctx.content_rect();
+
+        // 1. Backdrop assombri
+        egui::Area::new(Id::unique("screenshot_lightbox_backdrop"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let (r, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter().rect_filled(r, CornerRadius::ZERO, Color32::from_black_alpha(225));
+                if resp.clicked() || ctx.input(|i| i.key_pressed(Key::Escape)) {
+                    self.selected_screenshot = None;
+                }
+            });
+
+        // 2. Modale
+        let modal_w = (screen.width() - 80.0).min(1100.0);
+        let modal_h = (screen.height() - 80.0).min(750.0);
+        let pos = egui::pos2(
+            (screen.width() - modal_w) / 2.0,
+            (screen.height() - modal_h) / 2.0,
+        );
+
+        egui::Area::new(Id::unique("screenshot_lightbox_content"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(18, 18, 22))
+                    .stroke(Stroke::new(1.0, Color32::from_white_alpha(40)))
+                    .corner_radius(12.0)
+                    .inner_margin(Margin::same(16))
+                    .show(ui, |ui| {
+                        ui.set_width(modal_w);
+                        ui.set_height(modal_h);
+
+                        ui.horizontal(|ui| {
+                            let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("Capture");
+                            ui.label(RichText::new(fname).size(14.0).strong().color(WHITE));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.button("✕ Fermer (Échap)").clicked() {
+                                    self.selected_screenshot = None;
+                                }
+                                if ui.button("📂 Ouvrir le fichier").clicked() {
+                                    let _ = crate::process::open_uri(&p.to_string_lossy());
+                                }
+                            });
+                        });
+                        ui.add_space(10.0);
+
+                        let img_uri = format!("file://{}", p.to_string_lossy().replace('\\', "/"));
+                        ui.add(
+                            egui::Image::new(img_uri)
+                                .max_width(modal_w - 32.0)
+                                .max_height(modal_h - 70.0)
+                                .corner_radius(8.0)
+                                .fit_to_exact_size(vec2(modal_w - 32.0, modal_h - 70.0)),
+                        );
+                    });
+            });
     }
 }
