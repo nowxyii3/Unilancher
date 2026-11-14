@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build Windows Production ZIP & Release
+    name: Build Windows Production ZIP and Release
     runs-on: windows-latest
 
     steps:
@@ -61,36 +61,13 @@ jobs:
           $distDir = "UniLauncher-$verTag-Windows"
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
-          Copy-Item -Path "target/release/UniLauncher.exe" -Destination "$distDir\UniLauncher.exe" -Force
+          Copy-Item -Path "target\release\UniLauncher.exe" -Destination "$distDir\UniLauncher.exe" -Force
           if (Test-Path "LICENSE") {
             Copy-Item -Path "LICENSE" -Destination "$distDir\LICENSE.txt"
           }
-
-          $readme = @"
-================================================================================
-UniLauncher — Lanceur Universel de Jeux Vidéo pour Windows (x64)
-Version : $verTag (Production Stable)
-Dépôt GitHub : https://github.com/nowxyii3/Unilancher
-================================================================================
-
-🚀 DÉMARRAGE RAPIDE :
-1. Décompressez l'intégralité de cette archive ZIP dans un dossier de votre choix.
-2. Double-cliquez sur `UniLauncher.exe` pour lancer le lanceur.
-3. Application 100% portable et autonome (aucune installation requise).
-
-🎮 FONCTIONNALITÉS :
-- Centralisation automatique : Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox PC.
-- Mode Salon TV / Manette & Clavier (F10).
-- Recherche instantanée Spotlight (Alt + Espace).
-- Bons plans et jeux gratuits PC hebdomadaires.
-- Intégration Discord Rich Presence.
-- 8 thèmes sombres immersifs personnalisables.
-
-⚙️ COMPATIBILITÉ :
-- Windows 10 / Windows 11 (64-bit).
-- Données et jaquettes : %APPDATA%\UniLauncher\
-"@
-          Set-Content -Path "$distDir\README.txt" -Value $readme -Encoding utf8
+          if (Test-Path "packaging\README_DIST.txt") {
+            Copy-Item -Path "packaging\README_DIST.txt" -Destination "$distDir\README.txt"
+          }
 
           Compress-Archive -Path "$distDir\*" -DestinationPath $archiveName -CompressionLevel Optimal -Force
           Write-Host "Created archive: $archiveName"
@@ -105,22 +82,22 @@ Dépôt GitHub : https://github.com/nowxyii3/Unilancher
           tag_name: ${{ steps.dist.outputs.tag }}
           name: UniLauncher ${{ steps.dist.outputs.tag }}
           body: |
-            ## 🚀 UniLauncher ${{ steps.dist.outputs.tag }} — Release Officielle
+            ## UniLauncher ${{ steps.dist.outputs.tag }} — Release Officielle
 
             Bienvenue dans la version de production stable d'**UniLauncher** !
 
-            ### 📦 Téléchargement & Utilisation
-            - Téléchargez l'archive **`${{ steps.dist.outputs.archive_name }}`** ci-dessous.
-            - Décompressez l'archive où vous le souhaitez.
-            - Double-cliquez sur `UniLauncher.exe` pour lancer l'application. Aucun installeur requis (100% portable).
+            ### Telechargement et Utilisation
+            - Telechargez l'archive **${{ steps.dist.outputs.archive_name }}** ci-dessous.
+            - Decompressez l'archive ou vous le souhaitez.
+            - Double-cliquez sur `UniLauncher.exe` pour lancer le lanceur. Application 100% portable et autonome (aucun installeur requis).
 
-            ### ✨ Fonctionnalités Clés
-            - 🎮 Centralisation multi-boutiques automatique : Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox PC.
-            - 📺 Mode Salon TV / Big Picture (F10) pilotable à la manette et au clavier.
-            - ⚡ Recherche instantanée Spotlight (Alt + Espace).
-            - 🎁 Suivi en direct des jeux gratuits et bons plans PC.
-            - 🎧 Discord Rich Presence dynamique.
-            - 🎨 Moteur de 8 thèmes sombres (Obsidian, OLED Pur Noir, Cyberpunk, etc.).
+            ### Fonctionnalites Cles
+            - Centralisation multi-boutiques automatique (Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox PC)
+            - Mode Salon TV / Big Picture (F10) pilotable a la manette et au clavier
+            - Recherche instantanee Spotlight (Alt + Espace)
+            - Suivi en direct des jeux offerts et bons plans PC
+            - Discord Rich Presence dynamique
+            - Moteur de 8 themes sombres immersifs (Obsidian, OLED, Cyberpunk, etc.)
           files: ${{ steps.dist.outputs.archive_name }}
           draft: false
           prerelease: false
