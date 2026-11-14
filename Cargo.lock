@@ -3,8 +3,8 @@
 version = 4
 
 [[package]]
-name = "UniLancher"
-version = "0.1.0"
+name = "UniLauncher"
+version = "1.0.0"
 dependencies = [
  "dirs",
  "discord-rich-presence",

@@ -10,6 +10,7 @@ on:
         description: 'Tag name to release (e.g. v1.0.0)'
         required: true
         default: 'v1.0.0'
+        type: string
 
 permissions:
   contents: write
@@ -32,101 +33,95 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Tests
-        run: cargo test --verbose
-
-      - name: Build Windows Production Binary
-        run: cargo build --release
-
-      - name: Determine Version and Archive Name
-        id: vars
-        shell: bash
-        run: |
-          RAW_TAG="${{ github.ref_name }}"
-          if [ -z "$RAW_TAG" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_TAG="${{ github.event.inputs.tag_name }}"
-          fi
-          if [[ ! "$RAW_TAG" =~ ^v ]]; then
-            CLEAN_VERSION="v$RAW_TAG"
-          else
-            CLEAN_VERSION="$RAW_TAG"
-          fi
-          ARCHIVE_NAME="UniLauncher-${CLEAN_VERSION}-Windows.zip"
-          echo "tag=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
-          echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
-          echo "version=${CLEAN_VERSION#v}" >> $GITHUB_OUTPUT
-
-      - name: Prepare Distribution Folder
         shell: pwsh
         run: |
-          $ver = "${{ steps.vars.outputs.tag }}"
-          $distDir = "UniLauncher-$ver-Windows"
+          $env:CARGO_INCREMENTAL = "0"
+          cargo test --verbose
+
+      - name: Build Windows Production Binary
+        shell: pwsh
+        run: |
+          cargo build --release
+
+      - name: Prepare Distribution ZIP
+        id: dist
+        shell: pwsh
+        run: |
+          $rawTag = "${{ github.ref_name }}"
+          if ([string]::IsNullOrWhiteSpace($rawTag) -or "${{ github.event_name }}" -eq "workflow_dispatch") {
+            $rawTag = "${{ github.event.inputs.tag_name }}"
+          }
+          if (-not $rawTag.StartsWith("v")) {
+            $verTag = "v$rawTag"
+          } else {
+            $verTag = $rawTag
+          }
+
+          $archiveName = "UniLauncher-$verTag-Windows.zip"
+          $distDir = "UniLauncher-$verTag-Windows"
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-          
-          # Copy production binary
+
           Copy-Item -Path "target/release/UniLauncher.exe" -Destination "$distDir\UniLauncher.exe" -Force
-          
-          # Create official README.txt for users
-          $readmeContent = @"
-===================================================================
-UniLauncher — Lanceur Universel de Jeux Vidéo pour Windows (x64)
-Version : $($ver) (Production Stable)
-Dépôt GitHub : https://github.com/nowxyii3/Unilancher
-===================================================================
-
-🚀 DÉMARRAGE RAPIDE :
-1. Extrayez l'intégralité du contenu de cette archive ZIP dans un dossier de votre choix.
-2. Double-cliquez sur `UniLauncher.exe` pour lancer l'application.
-3. Aucune installation supplémentaire requise (application 100% portable et autonome).
-
-🎮 PRINCIPALES FONCTIONNALITÉS :
-- Centralisation multi-boutiques automatique : Steam, Epic Games, GOG, EA, Ubisoft, Battle.net, Xbox PC.
-- Mode Salon TV / Plein écran pilotable à la manette et au clavier (Touche F10).
-- Recherche instantanée globale type Spotlight (Raccourci Alt + Espace).
-- Agrégateur hebdomadaire des jeux gratuits et bons plans PC.
-- Intégration Discord Rich Presence en direct.
-- 8 thèmes visuels sombres modernes et personnalisation complète.
-
-⚙️ COMPATIBILITÉ & EMPLACEMENTS :
-- Système : Windows 10 / Windows 11 (64-bit).
-- Données de configuration et jaquettes en cache : %APPDATA%\UniLauncher\
-"@
-          Set-Content -Path "$distDir\README.txt" -Value $readmeContent -Encoding utf8
-          
-          # Create LICENSE.txt if not present
           if (Test-Path "LICENSE") {
             Copy-Item -Path "LICENSE" -Destination "$distDir\LICENSE.txt"
           }
 
-          # Compress to official ZIP archive
-          $archivePath = "${{ steps.vars.outputs.archive_name }}"
-          Compress-Archive -Path "$distDir\*" -DestinationPath $archivePath -CompressionLevel Optimal -Force
-          
-          Write-Host "Created archive: $archivePath"
-          Get-Item $archivePath | Format-List Length, Name
+          $readme = @"
+================================================================================
+UniLauncher — Lanceur Universel de Jeux Vidéo pour Windows (x64)
+Version : $verTag (Production Stable)
+Dépôt GitHub : https://github.com/nowxyii3/Unilancher
+================================================================================
+
+🚀 DÉMARRAGE RAPIDE :
+1. Décompressez l'intégralité de cette archive ZIP dans un dossier de votre choix.
+2. Double-cliquez sur `UniLauncher.exe` pour lancer le lanceur.
+3. Application 100% portable et autonome (aucune installation requise).
+
+🎮 FONCTIONNALITÉS :
+- Centralisation automatique : Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox PC.
+- Mode Salon TV / Manette & Clavier (F10).
+- Recherche instantanée Spotlight (Alt + Espace).
+- Bons plans et jeux gratuits PC hebdomadaires.
+- Intégration Discord Rich Presence.
+- 8 thèmes sombres immersifs personnalisables.
+
+⚙️ COMPATIBILITÉ :
+- Windows 10 / Windows 11 (64-bit).
+- Données et jaquettes : %APPDATA%\UniLauncher\
+"@
+          Set-Content -Path "$distDir\README.txt" -Value $readme -Encoding utf8
+
+          Compress-Archive -Path "$distDir\*" -DestinationPath $archiveName -CompressionLevel Optimal -Force
+          Write-Host "Created archive: $archiveName"
+          Get-Item $archiveName | Format-List Length, Name
+
+          "tag=$verTag" >> $env:GITHUB_OUTPUT
+          "archive_name=$archiveName" >> $env:GITHUB_OUTPUT
 
       - name: Publish Official GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.vars.outputs.tag }}
-          name: UniLauncher ${{ steps.vars.outputs.tag }}
+          tag_name: ${{ steps.dist.outputs.tag }}
+          name: UniLauncher ${{ steps.dist.outputs.tag }}
           body: |
-            ## 🚀 UniLauncher ${{ steps.vars.outputs.tag }} — Release Officielle
+            ## 🚀 UniLauncher ${{ steps.dist.outputs.tag }} — Release Officielle
 
             Bienvenue dans la version de production stable d'**UniLauncher** !
 
-            ### 📦 Téléchargement & Installation
-            - Téléchargez l'archive **`${{ steps.vars.outputs.archive_name }}`** ci-dessous.
+            ### 📦 Téléchargement & Utilisation
+            - Téléchargez l'archive **`${{ steps.dist.outputs.archive_name }}`** ci-dessous.
             - Décompressez l'archive où vous le souhaitez.
-            - Lancez directement `UniLauncher.exe`. Aucun installeur requis (100% portable).
+            - Double-cliquez sur `UniLauncher.exe` pour lancer l'application. Aucun installeur requis (100% portable).
 
             ### ✨ Fonctionnalités Clés
-            - 🎮 Centralisation multi-stores : Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox.
-            - 📺 Mode Salon TV / Big Picture (F10) pilotable manette et clavier.
+            - 🎮 Centralisation multi-boutiques automatique : Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox PC.
+            - 📺 Mode Salon TV / Big Picture (F10) pilotable à la manette et au clavier.
             - ⚡ Recherche instantanée Spotlight (Alt + Espace).
             - 🎁 Suivi en direct des jeux gratuits et bons plans PC.
             - 🎧 Discord Rich Presence dynamique.
-            - 🎨 Moteur de 8 thèmes sombres (Obsidian, OLED Pur Noir, Cyberpunk...).
-          files: ${{ steps.vars.outputs.archive_name }}
+            - 🎨 Moteur de 8 thèmes sombres (Obsidian, OLED Pur Noir, Cyberpunk, etc.).
+          files: ${{ steps.dist.outputs.archive_name }}
           draft: false
           prerelease: false
           generate_release_notes: true
