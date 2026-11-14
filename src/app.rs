@@ -4,7 +4,7 @@ use crate::process::{launch_game, open_uri};
 use crate::scan;
 use crate::theme::{
     apply_style, get_theme, ThemeColors, ACCENTS, BNET_C, DISCORD_C, EA_C, EPIC_C, GOG_C, GOLD,
-    GREEN, RED, STEAM_C, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, UBI_C, WHITE, XBOX_C,
+    GREEN, RED, STEAM_C, SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, UBI_C, WHITE, XBOX_C,
 };
 use crate::types::{Action, SortMode, Tab, ViewMode};
 use crate::ui::components::{icon_square_button, sidebar_item, trunc, Icon};
@@ -114,6 +114,9 @@ pub struct Launcher {
     pub(crate) edit_name_input: String,
     pub(crate) edit_desc_input: String,
     pub(crate) edit_date_input: String,
+
+    // Gestionnaire de mise à jour automatique
+    pub(crate) update_mgr: crate::update::UpdateManager,
 }
 
 impl Launcher {
@@ -210,6 +213,11 @@ impl Launcher {
             edit_name_input: String::new(),
             edit_desc_input: String::new(),
             edit_date_input: String::new(),
+            update_mgr: {
+                let mut m = crate::update::UpdateManager::new();
+                m.check_for_updates();
+                m
+            },
         };
 
         apply_style(&cc.egui_ctx, l.accent(), l.settings.theme);
@@ -803,16 +811,38 @@ impl Launcher {
                     ui.label(RichText::new("UniLauncher").size(13.0).strong().color(TEXT_PRIMARY));
                     ui.add_space(6.0);
 
-                    // Badge "CLIENT" discret
-                    let (client_r, _) = ui.allocate_exact_size(vec2(42.0, 16.0), Sense::hover());
-                    ui.painter().rect_filled(client_r, CornerRadius::same(4), th.surface_2);
+                    // Badge "v1.0.0"
+                    let ver_text = format!("v{}", crate::update::CURRENT_VERSION);
+                    let (ver_r, _) = ui.allocate_exact_size(vec2(46.0, 16.0), Sense::hover());
+                    ui.painter().rect_filled(ver_r, CornerRadius::same(4), th.surface_2);
                     ui.painter().text(
-                        client_r.center(),
+                        ver_r.center(),
                         Align2::CENTER_CENTER,
-                        "CLIENT",
+                        ver_text,
                         FontId::proportional(9.5),
                         TEXT_TERTIARY,
                     );
+
+                    // Badge notification si nouvelle mise à jour disponible
+                    if let Ok(st) = self.update_mgr.status.lock() {
+                        if let crate::update::UpdateStatus::UpdateAvailable(ref u) = *st {
+                            ui.add_space(6.0);
+                            let (badge_r, badge_resp) = ui.allocate_exact_size(vec2(108.0, 18.0), Sense::click());
+                            let hov = badge_resp.hovered();
+                            ui.painter().rect_filled(badge_r, CornerRadius::same(4), if hov { SUCCESS.gamma_multiply(0.28) } else { SUCCESS.gamma_multiply(0.18) });
+                            ui.painter().rect_stroke(badge_r, CornerRadius::same(4), Stroke::new(1.0, SUCCESS.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+                            ui.painter().text(
+                                badge_r.center(),
+                                Align2::CENTER_CENTER,
+                                format!("★ v{} DISPONIBLE", u.version),
+                                FontId::proportional(9.0),
+                                WHITE,
+                            );
+                            if badge_resp.clicked() {
+                                self.tab = crate::types::Tab::Settings;
+                            }
+                        }
+                    }
 
                     // ── Centre : Raccourci recherche centré (Raycast/Arc style) ──
                     let total_w = ui.available_width();
@@ -947,6 +977,9 @@ impl eframe::App for Launcher {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let th = self.theme();
+
+        // -1. Traitement des événements de mise à jour
+        self.update_mgr.update();
 
         // 0. Centrage automatique au milieu de l'écran lors du lancement
         if !self.centered_once && !self.is_fullscreen {

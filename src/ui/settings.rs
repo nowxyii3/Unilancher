@@ -8,7 +8,7 @@ use crate::theme::{
     WARNING, WHITE, XBOX_C,
 };
 use crate::ui::components::{modern_action_button, row, section, toggle, Icon};
-use eframe::egui::{self, vec2, Align, CornerRadius, Id, Layout, Margin, RichText, Sense, Stroke, Ui};
+use eframe::egui::{self, vec2, Align, CornerRadius, FontId, Id, Layout, Margin, Rect, RichText, Sense, Stroke, Ui};
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Boutons & Puces d'Action Dédiés aux Paramètres
@@ -1078,6 +1078,182 @@ impl Launcher {
                         }
                     });
                 });
+
+                // ═════════════════════════════════════════════════════════════
+                // 9. Mises à jour du Logiciel & Auto-Update
+                // ═════════════════════════════════════════════════════════════
+                section(ui, "🔄  Mises à jour du Logiciel & Auto-Update", th, |ui| {
+                    let cur_status = {
+                        let st = self.update_mgr.status.lock().unwrap();
+                        st.clone()
+                    };
+
+                    egui::Frame::new()
+                        .fill(th.surface_1)
+                        .stroke(Stroke::new(1.0, th.border_subtle))
+                        .corner_radius(CornerRadius::same(8))
+                        .inner_margin(Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Version installée :").size(13.0).strong().color(TEXT_PRIMARY));
+                                        ui.label(RichText::new(format!("v{}", crate::update::CURRENT_VERSION)).size(13.0).strong().color(accent));
+                                        ui.add_space(8.0);
+                                        let (tag_r, _) = ui.allocate_exact_size(vec2(72.0, 18.0), Sense::hover());
+                                        ui.painter().rect_filled(tag_r, CornerRadius::same(4), th.surface_2);
+                                        ui.painter().text(
+                                            tag_r.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            "CANAL STABLE",
+                                            FontId::proportional(9.0),
+                                            TEXT_TERTIARY,
+                                        );
+                                    });
+                                    ui.add_space(3.0);
+                                    ui.label(
+                                        RichText::new("Distribué via GitHub Releases officiel avec vérification d'intégrité.")
+                                            .size(11.5)
+                                            .color(TEXT_SECONDARY),
+                                    );
+                                });
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if primary_chip(ui, "🔍 Rechercher des mises à jour", accent) {
+                                        self.update_mgr.check_for_updates();
+                                    }
+                                });
+                            });
+                        });
+
+                    ui.add_space(12.0);
+
+                    match cur_status {
+                        crate::update::UpdateStatus::Idle => {
+                            ui.label(RichText::new("Cliquez sur « Rechercher des mises à jour » pour vérifier la dernière release disponible.").size(12.0).color(TEXT_TERTIARY));
+                        }
+                        crate::update::UpdateStatus::Checking => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("Interrogation de l'API GitHub Releases...").size(12.5).color(TEXT_SECONDARY));
+                            });
+                        }
+                        crate::update::UpdateStatus::UpToDate { version } => {
+                            egui::Frame::new()
+                                .fill(SUCCESS.gamma_multiply(0.12))
+                                .stroke(Stroke::new(1.0, SUCCESS.gamma_multiply(0.40)))
+                                .corner_radius(CornerRadius::same(6))
+                                .inner_margin(Margin::symmetric(12, 8))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("✓").size(14.0).strong().color(SUCCESS));
+                                        ui.label(RichText::new(format!("UniLauncher est parfaitement à jour (v{}).", version)).size(12.5).color(TEXT_PRIMARY));
+                                    });
+                                });
+                        }
+                        crate::update::UpdateStatus::UpdateAvailable(info) => {
+                            egui::Frame::new()
+                                .fill(accent.gamma_multiply(0.12))
+                                .stroke(Stroke::new(1.0, accent.gamma_multiply(0.50)))
+                                .corner_radius(CornerRadius::same(8))
+                                .inner_margin(Margin::same(12))
+                                .show(ui, |ui| {
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("★ Nouvelle version disponible !").size(14.0).strong().color(accent));
+                                            ui.label(RichText::new(format!("v{}", info.version)).size(13.0).strong().color(WHITE));
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                let btn_text = format!("⬇ Télécharger et installer ({} Mo)", (info.asset_size as f64 / 1_048_576.0).round());
+                                                if primary_chip(ui, &btn_text, accent) {
+                                                    self.update_mgr.start_download(info.clone());
+                                                }
+                                            });
+                                        });
+
+                                        ui.add_space(6.0);
+                                        ui.label(RichText::new(&info.title).size(12.5).strong().color(TEXT_PRIMARY));
+
+                                        if !info.changelog.is_empty() {
+                                            ui.add_space(6.0);
+                                            egui::Frame::new()
+                                                .fill(th.surface_2)
+                                                .corner_radius(CornerRadius::same(6))
+                                                .inner_margin(Margin::same(8))
+                                                .show(ui, |ui| {
+                                                    egui::ScrollArea::vertical()
+                                                        .id_salt("changelog_scroll")
+                                                        .max_height(100.0)
+                                                        .show(ui, |ui| {
+                                                            ui.label(RichText::new(&info.changelog).size(11.5).color(TEXT_SECONDARY));
+                                                        });
+                                                });
+                                        }
+                                    });
+                                });
+                        }
+                        crate::update::UpdateStatus::Downloading { version, percent, downloaded_bytes, total_bytes } => {
+                            egui::Frame::new()
+                                .fill(th.surface_1)
+                                .stroke(Stroke::new(1.0, th.border_subtle))
+                                .corner_radius(CornerRadius::same(8))
+                                .inner_margin(Margin::same(12))
+                                .show(ui, |ui| {
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(format!("Téléchargement de la v{}...", version)).size(13.0).strong().color(TEXT_PRIMARY));
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                ui.label(RichText::new(format!("{:.1} / {:.1} Mo ({:.0}%)", downloaded_bytes as f64 / 1_048_576.0, total_bytes as f64 / 1_048_576.0, percent * 100.0)).size(12.0).color(TEXT_SECONDARY));
+                                            });
+                                        });
+
+                                        ui.add_space(8.0);
+                                        let (bar_r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0), Sense::hover());
+                                        ui.painter().rect_filled(bar_r, CornerRadius::same(5), th.surface_2);
+                                        let fill_w = bar_r.width() * percent.clamp(0.0, 1.0);
+                                        if fill_w > 0.0 {
+                                            let fill_r = Rect::from_min_size(bar_r.min, vec2(fill_w, bar_r.height()));
+                                            ui.painter().rect_filled(fill_r, CornerRadius::same(5), accent);
+                                        }
+                                    });
+                                });
+                        }
+                        crate::update::UpdateStatus::ReadyToRestart { version, installer_path } => {
+                            egui::Frame::new()
+                                .fill(SUCCESS.gamma_multiply(0.15))
+                                .stroke(Stroke::new(1.0, SUCCESS.gamma_multiply(0.50)))
+                                .corner_radius(CornerRadius::same(8))
+                                .inner_margin(Margin::same(12))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new("✓ Mise à jour prête à être appliquée !").size(13.5).strong().color(SUCCESS));
+                                            ui.label(RichText::new(format!("La version v{} a été vérifiée et téléchargée.", version)).size(11.5).color(TEXT_SECONDARY));
+                                        });
+
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if primary_chip(ui, "🔄 Redémarrer et installer", SUCCESS) {
+                                                let _ = self.update_mgr.apply_update_and_restart(&installer_path);
+                                            }
+                                        });
+                                    });
+                                });
+                        }
+                        crate::update::UpdateStatus::Error(err) => {
+                            egui::Frame::new()
+                                .fill(ERROR.gamma_multiply(0.12))
+                                .stroke(Stroke::new(1.0, ERROR.gamma_multiply(0.40)))
+                                .corner_radius(CornerRadius::same(6))
+                                .inner_margin(Margin::symmetric(12, 8))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("✕").size(14.0).strong().color(ERROR));
+                                        ui.label(RichText::new(&err).size(12.0).color(TEXT_PRIMARY));
+                                    });
+                                });
+                        }
+                    }
+                });
             });
 
         if changed {
@@ -1177,6 +1353,7 @@ mod tests {
                 edit_name_input: String::new(),
                 edit_desc_input: String::new(),
                 edit_date_input: String::new(),
+                update_mgr: crate::update::UpdateManager::new(),
             }
         }
     }

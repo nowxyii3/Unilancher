@@ -9,9 +9,11 @@ mod emulators;
 mod performance;
 mod process;
 mod scan;
+mod setup;
 mod theme;
 mod types;
 mod ui;
+mod update;
 
 use app::Launcher;
 use config::Settings;
@@ -19,6 +21,35 @@ use eframe::egui::{self, IconData};
 use std::sync::Arc;
 
 fn main() -> eframe::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    // ── Mode 1 : Mise à jour transparente en arrière-plan (--update-apply) ──
+    if let Some(pos) = args.iter().position(|a| a == "--update-apply") {
+        let target_dir = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
+        let pid = args.get(pos + 2).map(|s| s.as_str()).unwrap_or("0");
+        setup::run_update_worker(target_dir, pid);
+        return Ok(());
+    }
+
+    // ── Mode 2 : Désinstallation (--uninstall ou exécutable nommé uninstall.exe) ──
+    let current_exe_name = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
+        .unwrap_or_default();
+
+    if args.iter().any(|a| a == "--uninstall") || current_exe_name.contains("uninstall") {
+        return setup::run_setup(true);
+    }
+
+    // ── Mode 3 : Assistant d'installation (--setup, --install ou exécutable nommé setup/installer) ──
+    if args.iter().any(|a| a == "--setup" || a == "--install")
+        || current_exe_name.contains("setup")
+        || current_exe_name.contains("installer")
+    {
+        return setup::run_setup(false);
+    }
+
+    // ── Mode 4 : Lancement normal du client UniLauncher ──
     let initial_settings = Settings::load();
     let start_fullscreen = initial_settings.start_fullscreen;
 

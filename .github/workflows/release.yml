@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build Windows Production ZIP and Release
+    name: Build Windows Production Setup and Release
     runs-on: windows-latest
 
     steps:
@@ -43,7 +43,7 @@ jobs:
         run: |
           cargo build --release
 
-      - name: Prepare Distribution ZIP
+      - name: Prepare Windows Setup & Checksums
         id: dist
         shell: pwsh
         run: |
@@ -57,24 +57,45 @@ jobs:
             $verTag = $rawTag
           }
 
-          $archiveName = "UniLauncher-$verTag-Windows.zip"
-          $distDir = "UniLauncher-$verTag-Windows"
+          $distDir = "release_artifacts"
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
-          Copy-Item -Path "target\release\UniLauncher.exe" -Destination "$distDir\UniLauncher.exe" -Force
+          # 1. Installateurs officiels
+          $setupExe = "$distDir\UniLauncherSetup.exe"
+          $setupVersionedExe = "$distDir\UniLauncherSetup-$verTag.exe"
+          Copy-Item -Path "target\release\UniLauncher.exe" -Destination $setupExe -Force
+          Copy-Item -Path "target\release\UniLauncher.exe" -Destination $setupVersionedExe -Force
+
+          # 2. Archive portable de secours
+          $zipFolder = "UniLauncher-$verTag-Windows"
+          New-Item -ItemType Directory -Force -Path $zipFolder | Out-Null
+          Copy-Item -Path "target\release\UniLauncher.exe" -Destination "$zipFolder\UniLauncher.exe" -Force
           if (Test-Path "LICENSE") {
-            Copy-Item -Path "LICENSE" -Destination "$distDir\LICENSE.txt"
+            Copy-Item -Path "LICENSE" -Destination "$zipFolder\LICENSE.txt"
           }
           if (Test-Path "packaging\README_DIST.txt") {
-            Copy-Item -Path "packaging\README_DIST.txt" -Destination "$distDir\README.txt"
+            Copy-Item -Path "packaging\README_DIST.txt" -Destination "$zipFolder\README.txt"
           }
+          $zipArchive = "$distDir\UniLauncher-$verTag-Windows.zip"
+          Compress-Archive -Path "$zipFolder\*" -DestinationPath $zipArchive -CompressionLevel Optimal -Force
 
-          Compress-Archive -Path "$distDir\*" -DestinationPath $archiveName -CompressionLevel Optimal -Force
-          Write-Host "Created archive: $archiveName"
-          Get-Item $archiveName | Format-List Length, Name
+          # 3. Calcul cryptographique SHA-256
+          $hashSetup = (Get-FileHash -Algorithm SHA256 $setupExe).Hash
+          $hashVerSetup = (Get-FileHash -Algorithm SHA256 $setupVersionedExe).Hash
+          $hashZip = (Get-FileHash -Algorithm SHA256 $zipArchive).Hash
+
+          $checksumsContent = @"
+$hashSetup  UniLauncherSetup.exe
+$hashVerSetup  UniLauncherSetup-$verTag.exe
+$hashZip  UniLauncher-$verTag-Windows.zip
+"@
+          $checksumsFile = "$distDir\checksums.txt"
+          Set-Content -Path $checksumsFile -Value $checksumsContent -Encoding utf8
+
+          Write-Host "Generated release artifacts:"
+          Get-ChildItem $distDir | Format-Table Name, Length
 
           "tag=$verTag" >> $env:GITHUB_OUTPUT
-          "archive_name=$archiveName" >> $env:GITHUB_OUTPUT
 
       - name: Publish Official GitHub Release
         uses: softprops/action-gh-release@v2
@@ -84,21 +105,29 @@ jobs:
           body: |
             ## UniLauncher ${{ steps.dist.outputs.tag }} — Release Officielle
 
-            Bienvenue dans la version de production stable d'**UniLauncher** !
+            Bienvenue dans la version stable d'**UniLauncher** !
 
-            ### Telechargement et Utilisation
-            - Telechargez l'archive **${{ steps.dist.outputs.archive_name }}** ci-dessous.
-            - Decompressez l'archive ou vous le souhaitez.
-            - Double-cliquez sur `UniLauncher.exe` pour lancer le lanceur. Application 100% portable et autonome (aucun installeur requis).
+            ### 🚀 Installation Professionnelle Windows
+            1. Téléchargez l'installateur officiel **`UniLauncherSetup.exe`** ci-dessous.
+            2. Double-cliquez sur le fichier pour lancer l'assistant graphique d'installation.
+            3. Choisissez votre dossier d'installation (recommandé : `%LOCALAPPDATA%\Programs\UniLauncher`).
+            4. Cliquez sur **Installer** puis profitez immédiatement de votre bibliothèque unifiée !
 
-            ### Fonctionnalites Cles
-            - Centralisation multi-boutiques automatique (Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox PC)
-            - Mode Salon TV / Big Picture (F10) pilotable a la manette et au clavier
-            - Recherche instantanee Spotlight (Alt + Espace)
-            - Suivi en direct des jeux offerts et bons plans PC
-            - Discord Rich Presence dynamique
-            - Moteur de 8 themes sombres immersifs (Obsidian, OLED, Cyberpunk, etc.)
-          files: ${{ steps.dist.outputs.archive_name }}
+            ### 📦 Fichiers inclus dans cette release
+            - **`UniLauncherSetup.exe`** : Assistant d'installation graphique autonome pour Windows 10 & 11 (64-bit).
+            - **`UniLauncherSetup-${{ steps.dist.outputs.tag }}.exe`** : Installateur versionné spécifique.
+            - **`UniLauncher-${{ steps.dist.outputs.tag }}-Windows.zip`** : Archive portable autonome pour utilisateurs avancés.
+            - **`checksums.txt`** : Empreintes cryptographiques SHA-256 officielles pour vérification d'intégrité.
+
+            ### ✨ Fonctionnalités Clés
+            - 🎮 Centralisation multi-stores automatique (Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox PC)
+            - 📺 Mode Salon TV / Big Picture (F10) pilotable à la manette et au clavier
+            - ⚡ Recherche instantanée Spotlight (Alt + Espace)
+            - 🎁 Suivi en direct des jeux offerts et bons plans PC hebdomadaires
+            - 🔄 Système de mise à jour intégrée (**Paramètres → Mises à jour**)
+            - 🎧 Discord Rich Presence dynamique
+            - 🎨 Moteur de 8 thèmes sombres immersifs (Obsidian, OLED, Cyberpunk, etc.)
+          files: release_artifacts/*
           draft: false
           prerelease: false
           generate_release_notes: true
