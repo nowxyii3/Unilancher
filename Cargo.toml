@@ -1,7 +1,9 @@
 [package]
-name = "UniLancher"
-version = "0.1.0"
+name = "UniLauncher"
+version = "1.0.0"
 edition = "2021"
+authors = ["nowxyii3"]
+description = "Lanceur universel de jeux vidéo pour Windows"
 
 [dependencies]
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "links", "accesskit", "clipboard", "system_fonts"] }
