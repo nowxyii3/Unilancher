@@ -21,8 +21,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-#[cfg(windows)]
-use std::process::Command;
+
 
 // ───────────────────────────── Structure Principale ─────────────────────────────
 pub struct Launcher {
@@ -150,6 +149,7 @@ impl Launcher {
         );
 
         let is_fullscreen = settings.start_fullscreen;
+        let update_channel = settings.update_channel;
         let mut l = Self {
             sort: settings.sort_mode,
             view_mode: settings.view_mode,
@@ -227,7 +227,7 @@ impl Launcher {
             edit_date_input: String::new(),
             update_mgr: {
                 let mut m = crate::update::UpdateManager::new();
-                m.check_for_updates();
+                m.check_for_updates(update_channel);
                 m
             },
         };
@@ -1249,13 +1249,7 @@ impl eframe::App for Launcher {
             self.active_game = None;
             self.update_rpc_menu();
             if self.settings.performance_mode {
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    let mut cmd = Command::new("powercfg");
-                    cmd.creation_flags(0x08000000);
-                    let _ = cmd.args(["/setactive", "381b4222-f694-41f0-9685-ff5bb260df2e"]).spawn();
-                }
+                crate::process::set_balanced_power_scheme();
             }
             if mins_added > 0 {
                 let entry = self.settings.tracked_playtime.entry(game_id.clone()).or_insert(0);

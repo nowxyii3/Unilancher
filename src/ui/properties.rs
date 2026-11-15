@@ -525,11 +525,7 @@ impl Launcher {
                     1 => {
                         ui.add_space(4.0);
                         let sessions_count = self.settings.session_counts.get(&game.id).copied().unwrap_or(0);
-                        let avg_session = if sessions_count > 0 {
-                            play_mins / sessions_count
-                        } else {
-                            0
-                        };
+                        let avg_session = play_mins.checked_div(sessions_count).unwrap_or(0);
 
                         ui.horizontal(|ui| {
                             let card_w = ((ui.available_width() - 24.0) / 3.0).max(140.0);
@@ -735,11 +731,10 @@ impl Launcher {
                                     if ui.button("🎨  Modifier la jaquette HD…").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                         actions.push(Action::PickCover(game.id.clone()));
                                     }
-                                    if self.settings.cover_overrides.contains_key(&game.id) {
-                                        if ui.button("🔄  Réinitialiser la jaquette").clicked() {
+                                    if self.settings.cover_overrides.contains_key(&game.id)
+                                        && ui.button("🔄  Réinitialiser la jaquette").clicked() {
                                             actions.push(Action::ClearCover(game.id.clone()));
                                         }
-                                    }
                                     if ui.button("🌐  Télécharger jaquette Steam auto").clicked() {
                                         actions.push(Action::DownloadCover(game.id.clone()));
                                     }
@@ -751,11 +746,10 @@ impl Launcher {
                                     if ui.button("🖼️  Modifier la bannière Hero HD…").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                         actions.push(Action::PickBanner(game.id.clone()));
                                     }
-                                    if self.settings.banner_overrides.contains_key(&game.id) {
-                                        if ui.button("🔄  Réinitialiser la bannière").clicked() {
+                                    if self.settings.banner_overrides.contains_key(&game.id)
+                                        && ui.button("🔄  Réinitialiser la bannière").clicked() {
                                             actions.push(Action::ClearBanner(game.id.clone()));
                                         }
-                                    }
                                 });
                             });
 
@@ -775,11 +769,10 @@ impl Launcher {
                                     if ui.button("🎯  Choisir un exécutable alternatif…").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                         actions.push(Action::PickExe(game.id.clone()));
                                     }
-                                    if self.settings.exe_overrides.contains_key(&game.id) {
-                                        if ui.button("Réinitialiser l'exécutable").clicked() {
+                                    if self.settings.exe_overrides.contains_key(&game.id)
+                                        && ui.button("Réinitialiser l'exécutable").clicked() {
                                             actions.push(Action::ClearExe(game.id.clone()));
                                         }
-                                    }
                                 });
 
                                 ui.add_space(10.0);

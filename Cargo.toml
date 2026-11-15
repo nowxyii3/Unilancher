@@ -1,9 +1,9 @@
 [package]
 name = "UniLauncher"
-version = "1.1.0"
+version = "1.1.0-beta.1"
 edition = "2021"
 authors = ["nowxyii3"]
-description = "Lanceur universel de jeux vidéo pour Windows"
+description = "Lanceur universel de jeux vidéo pour Windows (BETA)"
 
 [dependencies]
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "links", "accesskit", "clipboard", "system_fonts"] }
@@ -16,3 +16,9 @@ discord-rich-presence = "1.1.0"
 ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
 sysinfo = "0.33"
 winreg = "0.52"
+mslnk = "0.1"
+sha2 = "0.10"
+windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_Foundation"] }
+
+[build-dependencies]
+winres = "0.1"

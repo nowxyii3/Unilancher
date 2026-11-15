@@ -1,0 +1,90 @@
+name: Build & Test UniLauncher BETA
+
+on:
+  push:
+    branches:
+      - beta
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-beta:
+    name: Build UniLauncher BETA (Windows x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Tests (Unit & Integration)
+        shell: pwsh
+        run: |
+          $env:CARGO_INCREMENTAL = "0"
+          cargo test --verbose
+
+      - name: Build Windows Release Binary
+        shell: pwsh
+        run: |
+          $env:CARGO_INCREMENTAL = "0"
+          cargo build --release
+
+      - name: Package Beta Artifacts & Compute Checksums
+        id: package
+        shell: pwsh
+        run: |
+          $version = "1.1.0-beta.1"
+          $distDir = "beta_artifacts"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+
+          # 1. Installateurs BETA autonomes
+          $setupExe = "$distDir\UniLauncher-Beta-Setup.exe"
+          $setupVersionedExe = "$distDir\UniLauncher-Beta-Setup-v$version.exe"
+          Copy-Item -Path "target\release\UniLauncher.exe" -Destination $setupExe -Force
+          Copy-Item -Path "target\release\UniLauncher.exe" -Destination $setupVersionedExe -Force
+
+          # 2. Archive portable BETA de secours
+          $zipFolder = "UniLauncher-v$version-Windows"
+          New-Item -ItemType Directory -Force -Path $zipFolder | Out-Null
+          Copy-Item -Path "target\release\UniLauncher.exe" -Destination "$zipFolder\UniLauncher.exe" -Force
+          if (Test-Path "LICENSE") {
+            Copy-Item -Path "LICENSE" -Destination "$zipFolder\LICENSE.txt"
+          }
+          if (Test-Path "packaging\README_DIST.txt") {
+            Copy-Item -Path "packaging\README_DIST.txt" -Destination "$zipFolder\README.txt"
+          }
+          $zipArchive = "$distDir\UniLauncher-v$version-Windows.zip"
+          Compress-Archive -Path "$zipFolder\*" -DestinationPath $zipArchive -CompressionLevel Optimal -Force
+
+          # 3. Calcul cryptographique SHA-256
+          $hashSetup = (Get-FileHash -Algorithm SHA256 $setupExe).Hash
+          $hashVerSetup = (Get-FileHash -Algorithm SHA256 $setupVersionedExe).Hash
+          $hashZip = (Get-FileHash -Algorithm SHA256 $zipArchive).Hash
+
+          $checksumsLines = @(
+            "$hashSetup  UniLauncher-Beta-Setup.exe",
+            "$hashVerSetup  UniLauncher-Beta-Setup-v$version.exe",
+            "$hashZip  UniLauncher-v$version-Windows.zip"
+          )
+          $checksumsFile = "$distDir\checksums.txt"
+          $checksumsLines | Set-Content -Path $checksumsFile -Encoding utf8
+
+          Write-Host "Generated BETA artifacts:"
+          Get-ChildItem $distDir | Format-Table Name, Length
+
+      - name: Upload BETA Artifacts to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: UniLauncher-Beta-v1.1.0-beta.1-Windows
+          path: beta_artifacts/*
+          retention-days: 30
+          if-no-files-found: error

@@ -1263,24 +1263,14 @@ pub fn uninstall_game(g: &Game) -> Result<(), String> {
         Source::Steam => {
             if let Some(appid) = g.id.strip_prefix("steam:") {
                 let uri = format!("steam://uninstall/{appid}");
-                let _ = std::process::Command::new("cmd")
-                    .args(["/c", "start", &uri])
-                    .spawn();
-                return Ok(());
+                return crate::process::open_uri(&uri);
             }
         }
         Source::Epic => {
-            let _ = std::process::Command::new("cmd")
-                .args(["/c", "start", "com.epicgames.launcher://apps?action=open"])
-                .spawn();
-            return Ok(());
+            return crate::process::open_uri("com.epicgames.launcher://apps?action=open");
         }
         _ => {}
     }
 
-    let _ = std::process::Command::new("cmd")
-        .args(["/c", "start", "ms-settings:appsfeatures"])
-        .spawn();
-
-    Ok(())
+    crate::process::open_uri("ms-settings:appsfeatures")
 }

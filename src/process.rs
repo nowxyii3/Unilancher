@@ -7,8 +7,79 @@ use std::{
     time::Instant,
 };
 
+/// Liste blanche stricte des protocoles autorisés pour éviter toute injection ou exécution arbitraire
+const ALLOWED_URI_SCHEMES: &[&str] = &[
+    "steam://",
+    "com.epicgames.launcher://",
+    "uplay://",
+    "origin2://",
+    "ea://",
+    "battlenet://",
+    "xbox://",
+    "ms-windows-store://",
+    "ms-settings:",
+    "https://",
+    "http://",
+];
+
+/// Vérifie si une URI est conforme à la liste blanche de sécurité
+pub fn is_safe_uri(u: &str) -> bool {
+    let lower = u.trim().to_lowercase();
+    ALLOWED_URI_SCHEMES.iter().any(|scheme| lower.starts_with(scheme))
+}
+
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WinGuid {
+    data1: u32,
+    data2: u16,
+    data3: u16,
+    data4: [u8; 8],
+}
+
+#[cfg(windows)]
+#[link(name = "powrprof")]
+extern "system" {
+    fn PowerSetActiveScheme(
+        rootpowerkey: *const std::ffi::c_void,
+        schemeguid: *const WinGuid,
+    ) -> u32;
+}
+
+#[cfg(windows)]
+pub fn set_high_performance_power_scheme() {
+    // GUID pour Performance Élevée : 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+    let high_perf = WinGuid {
+        data1: 0x8c5e7fda,
+        data2: 0xe8bf,
+        data3: 0x4a96,
+        data4: [0x9a, 0x85, 0xa6, 0xe2, 0x3a, 0x8c, 0x63, 0x5c],
+    };
+    unsafe {
+        let _ = PowerSetActiveScheme(std::ptr::null(), &high_perf);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_high_performance_power_scheme() {}
+
+#[cfg(windows)]
+pub fn set_balanced_power_scheme() {
+    // GUID pour Mode Normal / Équilibré : 381b4222-f694-41f0-9685-ff5bb260df2e
+    let balanced = WinGuid {
+        data1: 0x381b4222,
+        data2: 0xf694,
+        data3: 0x41f0,
+        data4: [0x96, 0x85, 0xff, 0x5b, 0xb2, 0x60, 0xdf, 0x2e],
+    };
+    unsafe {
+        let _ = PowerSetActiveScheme(std::ptr::null(), &balanced);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_balanced_power_scheme() {}
 
 pub fn launch_game(
     g: &Game,
@@ -16,12 +87,7 @@ pub fn launch_game(
     tx: mpsc::Sender<(String, u32)>,
 ) -> Result<(), String> {
     if s.performance_mode {
-        #[cfg(windows)]
-        {
-            let mut cmd = Command::new("powercfg");
-            cmd.creation_flags(0x08000000);
-            let _ = cmd.args(["/setactive", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"]).spawn();
-        }
+        set_high_performance_power_scheme();
     }
 
     let custom_args = s.launch_args.get(&g.id).cloned().unwrap_or_default();
@@ -81,6 +147,10 @@ pub fn spawn_and_track(
 }
 
 pub fn open_uri(u: &str) -> Result<(), String> {
+    if !is_safe_uri(u) {
+        return Err(format!("Protocole URI rejeté par sécurité : {u}"));
+    }
+
     #[cfg(windows)]
     let mut c = Command::new("explorer");
     #[cfg(target_os = "macos")]
@@ -88,4 +158,26 @@ pub fn open_uri(u: &str) -> Result<(), String> {
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut c = Command::new("xdg-open");
     c.arg(u).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_safe_uri() {
+        assert!(is_safe_uri("steam://rungameid/12345"));
+        assert!(is_safe_uri("com.epicgames.launcher://apps?action=open"));
+        assert!(is_safe_uri("https://store.steampowered.com"));
+        assert!(is_safe_uri("http://example.com"));
+        assert!(is_safe_uri("ms-settings:appsfeatures"));
+        assert!(is_safe_uri("uplay://launch/123"));
+        assert!(is_safe_uri("xbox://launch/123"));
+
+        // Reject dangerous/unauthorized schemes
+        assert!(!is_safe_uri("cmd.exe /c calc"));
+        assert!(!is_safe_uri("powershell -Command calc"));
+        assert!(!is_safe_uri("javascript:alert(1)"));
+        assert!(!is_safe_uri("file:///C:/Windows/System32/calc.exe"));
+    }
 }

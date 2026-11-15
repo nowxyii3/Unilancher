@@ -184,6 +184,35 @@ pub struct Settings {
     /// Animations et transitions activées
     #[serde(default = "default_true")]
     pub enable_animations: bool,
+    /// Canal de mise à jour (Stable vs BETA)
+    #[serde(default)]
+    pub update_channel: UpdateChannel,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
+pub enum UpdateChannel {
+    Stable,
+    Beta,
+}
+
+impl Default for UpdateChannel {
+    fn default() -> Self {
+        if env!("CARGO_PKG_VERSION").contains("beta") {
+            UpdateChannel::Beta
+        } else {
+            UpdateChannel::Stable
+        }
+    }
+}
+
+impl UpdateChannel {
+    #[allow(dead_code)]
+    pub fn label(&self) -> &'static str {
+        match self {
+            UpdateChannel::Stable => "Stable",
+            UpdateChannel::Beta => "BETA",
+        }
+    }
 }
 
 fn default_grid_spacing() -> f32 {
@@ -249,13 +278,26 @@ impl Default for Settings {
             show_card_playtime: true,
             show_card_badges: true,
             enable_animations: true,
+            update_channel: UpdateChannel::default(),
         }
     }
 }
 
 impl Settings {
-    /// Dossier de stockage de la configuration (%APPDATA%/UniLauncher sous Windows)
+    /// Dossier de stockage de la configuration (%APPDATA%/UniLauncher ou %APPDATA%/UniLauncher-Beta sous Windows)
     pub fn dir() -> PathBuf {
+        let folder = if env!("CARGO_PKG_VERSION").contains("beta") {
+            "UniLauncher-Beta"
+        } else {
+            "UniLauncher"
+        };
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(folder)
+    }
+
+    /// Dossier de configuration de la version stable pour importation sécurisée en mode BETA
+    pub fn stable_dir() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("UniLauncher")
@@ -268,8 +310,19 @@ impl Settings {
 
     /// Charge la configuration depuis le disque ou renvoie les valeurs par défaut
     pub fn load() -> Self {
-        let mut settings: Self = fs::read_to_string(Self::file())
-            .ok()
+        let current_file = Self::file();
+        let json_text = if current_file.exists() {
+            fs::read_to_string(&current_file).ok()
+        } else if env!("CARGO_PKG_VERSION").contains("beta") {
+            // En mode BETA, si aucune config beta n'existe encore, on importe en lecture seule
+            // la configuration stable existante sans jamais modifier cette dernière.
+            let stable_file = Self::stable_dir().join("config.json");
+            fs::read_to_string(&stable_file).ok()
+        } else {
+            None
+        };
+
+        let mut settings: Self = json_text
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
 
