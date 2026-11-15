@@ -4,7 +4,9 @@ use crate::theme::{
     BNET_C, EA_C, EPIC_C, GOG_C, GOLD, RED, STEAM_C, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY,
     UBI_C, WHITE, XBOX_C,
 };
-use crate::types::{format_playtime, Action, SortMode, Tab, ViewMode};
+use crate::types::{
+    format_playtime, Action, GridCardSize, LibraryStatusFilter, SortMode, Tab, ViewMode,
+};
 use crate::ui::components::{
     draw_icon, game_card, game_list_row, hero_banner, icon_square_button, modern_action_button,
     search_bar, stat_chip, Icon,
@@ -142,9 +144,11 @@ impl Launcher {
 
         ui.add_space(12.0);
 
-        // ── 3. CONTRÔLES SEGMENTÉS (FILTRES, TRIS & MODES D'AFFICHAGE) ──
-        ui.horizontal(|ui| {
-            // Segmented Control Filtres Rapides
+        // ── 3. CONTRÔLES SEGMENTÉS (FILTRES AVANCÉS, TRIS & MODES D'AFFICHAGE) ──
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+
+            // Segmented Control Filtres Avancés
             egui::Frame::new()
                 .fill(th.surface_1)
                 .stroke(Stroke::new(1.0, th.border_subtle))
@@ -152,13 +156,15 @@ impl Launcher {
                 .inner_margin(Margin::same(2))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = 1.0;
-                    for (idx, lbl) in [
-                        (0, "Tous les jeux"),
-                        (1, "⭐ Favoris"),
-                        (2, "🕒 Récents"),
-                        (3, "✨ Non lancés"),
+                    for filter in [
+                        LibraryStatusFilter::All,
+                        LibraryStatusFilter::Favorites,
+                        LibraryStatusFilter::Recent,
+                        LibraryStatusFilter::NeverPlayed,
+                        LibraryStatusFilter::Installed,
+                        LibraryStatusFilter::NotInstalled,
                     ] {
-                        let sel = self.settings.quick_filter_mode == idx;
+                        let sel = self.settings.status_filter == filter;
                         let bg = if sel {
                             accent.gamma_multiply(0.20)
                         } else {
@@ -171,7 +177,7 @@ impl Launcher {
                         };
                         let fg = if sel { TEXT_PRIMARY } else { TEXT_SECONDARY };
 
-                        let btn = egui::Button::new(RichText::new(lbl).size(11.5).strong().color(fg))
+                        let btn = egui::Button::new(RichText::new(filter.label()).size(11.5).strong().color(fg))
                             .fill(bg)
                             .stroke(border_stroke)
                             .corner_radius(6.0);
@@ -181,14 +187,13 @@ impl Launcher {
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                         {
-                            self.settings.quick_filter_mode = idx;
+                            self.settings.status_filter = filter;
+                            self.settings.save();
                         }
                     }
                 });
 
-            ui.add_space(8.0);
-
-            // Segmented Control Ordre de Tri
+            // Segmented Control Ordre de Tri Enrichi
             egui::Frame::new()
                 .fill(th.surface_1)
                 .stroke(Stroke::new(1.0, th.border_subtle))
@@ -197,10 +202,12 @@ impl Launcher {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = 1.0;
                     for (mode, lbl) in [
-                        (SortMode::Playtime, "Temps de jeu"),
+                        (SortMode::Playtime, "Temps"),
                         (SortMode::Name, "A → Z"),
+                        (SortMode::NameDesc, "Z → A"),
+                        (SortMode::LastPlayed, "Récents"),
                         (SortMode::Favorites, "Favoris"),
-                        (SortMode::SizeOnDisk, "Taille disque"),
+                        (SortMode::SizeOnDisk, "Taille"),
                     ] {
                         let sel = self.sort == mode;
                         let bg = if sel {
@@ -226,12 +233,65 @@ impl Launcher {
                             .clicked()
                         {
                             self.sort = mode;
+                            self.settings.sort_mode = mode;
+                            self.settings.save();
                         }
                     }
                 });
 
-            // Contrôles de vue alignés à droite
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // Tailles de Cartes (S, M, L) pour le Mode Grille
+            if self.view_mode == ViewMode::Grid {
+                egui::Frame::new()
+                    .fill(th.surface_1)
+                    .stroke(Stroke::new(1.0, th.border_subtle))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::same(2))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 1.0;
+                        for (sz, lbl) in [
+                            (GridCardSize::Small, "S"),
+                            (GridCardSize::Medium, "M"),
+                            (GridCardSize::Large, "L"),
+                        ] {
+                            let sel = self.settings.grid_card_size == sz;
+                            let bg = if sel { th.surface_3 } else { Color32::TRANSPARENT };
+                            let fg = if sel { accent } else { TEXT_TERTIARY };
+                            let btn = egui::Button::new(RichText::new(lbl).size(11.0).strong().color(fg))
+                                .fill(bg)
+                                .corner_radius(5.0);
+                            if ui.add(btn).on_hover_text(format!("Taille de jaquette : {}", sz.label())).clicked() {
+                                self.settings.grid_card_size = sz;
+                                self.settings.save();
+                            }
+                        }
+                    });
+            }
+
+            // Contrôles de vue alignés
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                if icon_square_button(
+                    ui,
+                    Icon::Grid,
+                    "Vue Grille de jaquettes",
+                    self.view_mode == ViewMode::Grid,
+                    th,
+                ) {
+                    self.view_mode = ViewMode::Grid;
+                    self.settings.view_mode = ViewMode::Grid;
+                    self.settings.save();
+                }
+                if icon_square_button(
+                    ui,
+                    Icon::List,
+                    "Vue Liste détaillée",
+                    self.view_mode == ViewMode::List,
+                    th,
+                ) {
+                    self.view_mode = ViewMode::List;
+                    self.settings.view_mode = ViewMode::List;
+                    self.settings.save();
+                }
                 if icon_square_button(
                     ui,
                     Icon::Gamepad,
@@ -241,34 +301,16 @@ impl Launcher {
                 ) {
                     self.is_big_picture = true;
                 }
-                ui.add_space(3.0);
-                if icon_square_button(
-                    ui,
-                    Icon::List,
-                    "Vue Liste détaillée",
-                    self.view_mode == ViewMode::List,
-                    th,
-                ) {
-                    self.view_mode = ViewMode::List;
-                }
-                if icon_square_button(
-                    ui,
-                    Icon::Grid,
-                    "Vue Grille de jaquettes",
-                    self.view_mode == ViewMode::Grid,
-                    th,
-                ) {
-                    self.view_mode = ViewMode::Grid;
-                }
-                ui.add_space(8.0);
 
-                // Slider de zoom élégant
+                ui.add_space(6.0);
+
+                // Slider de zoom fin
                 ui.add(
                     egui::Slider::new(&mut self.settings.card_scale, 0.75..=1.35)
                         .show_value(false)
                         .trailing_fill(true),
                 )
-                .on_hover_text(format!("Échelle des jaquettes ({:.0}%)", self.settings.card_scale * 100.0));
+                .on_hover_text(format!("Échelle dynamique ({:.0}%)", self.settings.card_scale * 100.0));
             });
         });
 
@@ -361,9 +403,13 @@ impl Launcher {
                 match self.view_mode {
                     // ── Mode Grille de Jaquettes ──
                     ViewMode::Grid => {
+                        let spacing = self.settings.grid_spacing.clamp(8.0, 36.0);
+                        let (card_w, _) = self.settings.grid_card_size.dimensions(self.settings.card_scale);
+                        let avail_w = ui.available_width();
+                        let _cols = ((avail_w + spacing) / (card_w + spacing)).floor().max(1.0) as usize;
+
                         ui.horizontal_wrapped(|ui| {
-                            let spacing = self.settings.grid_spacing.clamp(8.0, 36.0);
-                            ui.spacing_mut().item_spacing = vec2(spacing, spacing + 4.0);
+                            ui.spacing_mut().item_spacing = vec2(spacing, spacing + 6.0);
 
                             for &i in &filtered {
                                 let g = self.games[i].clone();
@@ -371,27 +417,34 @@ impl Launcher {
                                 let ovr = self.settings.exe_overrides.get(&g.id).cloned();
                                 let fixed = ovr.as_ref().map(|p| p.exists()).unwrap_or(false);
                                 let broken = g.is_broken() && !fixed;
+                                let is_running = self
+                                    .active_game
+                                    .as_ref()
+                                    .map(|(name, _)| name == &g.name)
+                                    .unwrap_or(false);
                                 let play_mins = self.total_playtime_mins(&g);
                                 let tex = self.get_cover_texture(&ctx, &g);
 
-                                let (resp, star_clicked) = game_card(
+                                let (resp, star_clicked, details_clicked, play_clicked) = game_card(
                                     ui,
                                     &g,
                                     tex.as_ref(),
                                     play_mins,
                                     fav,
                                     broken,
+                                    is_running,
                                     ovr.is_some(),
                                     accent,
                                     self.settings.card_scale,
+                                    self.settings.grid_card_size,
                                     th,
                                 );
 
                                 if star_clicked {
                                     actions.push(Action::Fav(g.id.clone()));
-                                } else if resp.double_clicked() {
+                                } else if play_clicked || resp.double_clicked() {
                                     actions.push(Action::Launch(i));
-                                } else if resp.clicked() {
+                                } else if details_clicked || resp.clicked() {
                                     actions.push(Action::OpenDetails(g.id.clone()));
                                 }
 
@@ -407,15 +460,34 @@ impl Launcher {
                             for &i in &filtered {
                                 let g = self.games[i].clone();
                                 let fav = favs.contains(&g.id);
+                                let ovr = self.settings.exe_overrides.get(&g.id).cloned();
+                                let fixed = ovr.as_ref().map(|p| p.exists()).unwrap_or(false);
+                                let broken = g.is_broken() && !fixed;
+                                let is_running = self
+                                    .active_game
+                                    .as_ref()
+                                    .map(|(name, _)| name == &g.name)
+                                    .unwrap_or(false);
                                 let play_mins = self.total_playtime_mins(&g);
+                                let last_session = self.settings.last_played_dates.get(&g.id).copied();
                                 let tex = self.get_cover_texture(&ctx, &g);
 
-                                let (resp, play_clicked, fav_clicked, opt_clicked) =
-                                    game_list_row(ui, &g, tex.as_ref(), play_mins, fav, accent, th);
+                                let (resp, play_clicked, fav_clicked, opt_clicked) = game_list_row(
+                                    ui,
+                                    &g,
+                                    tex.as_ref(),
+                                    play_mins,
+                                    last_session,
+                                    fav,
+                                    broken,
+                                    is_running,
+                                    accent,
+                                    th,
+                                );
 
                                 if fav_clicked {
                                     actions.push(Action::Fav(g.id.clone()));
-                                } else if opt_clicked {
+                                } else if opt_clicked || resp.clicked() {
                                     actions.push(Action::OpenDetails(g.id.clone()));
                                 } else if play_clicked || resp.double_clicked() {
                                     actions.push(Action::Launch(i));

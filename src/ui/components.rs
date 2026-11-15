@@ -852,7 +852,7 @@ pub fn hero_banner(
     (play_resp.clicked(), prop_resp.clicked())
 }
 
-// ───────────────────────────── Carte de Jeu (Game Card) ──────────────────────
+// ───────────────────────────── Carte de Jeu Moderne (Game Card) ──────────────────────
 #[allow(clippy::too_many_arguments)]
 pub fn game_card(
     ui: &mut Ui,
@@ -861,18 +861,21 @@ pub fn game_card(
     play_mins: u32,
     fav: bool,
     broken: bool,
+    is_running: bool,
     custom: bool,
     accent: Color32,
     scale: f32,
+    grid_size: crate::types::GridCardSize,
     th: ThemeColors,
-) -> (egui::Response, bool) {
-    let scale = scale.clamp(0.7, 1.4);
-    let card_w = 184.0 * scale;
-    let card_h = 258.0 * scale;
+) -> (egui::Response, bool, bool, bool) {
+    let scale = scale.clamp(0.70, 1.40);
+    let (card_w, card_h) = grid_size.dimensions(scale);
     let (base_rect, resp) = ui.allocate_exact_size(vec2(card_w, card_h), Sense::click());
     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+
+    // Culling visuel ultra-rapide : zéro coût GPU/CPU si hors écran (supporte des milliers de jeux)
     if !ui.is_rect_visible(base_rect) {
-        return (resp, false);
+        return (resp, false, false, false);
     }
 
     let hov_t = ui
@@ -881,8 +884,8 @@ pub fn game_card(
 
     let p = ui.painter().clone();
 
-    // Élévation subtile de 3px max au survol (plus fluide et sobre que 5px)
-    let rect = base_rect.translate(vec2(0.0, -3.0 * hov_t * scale));
+    // Élévation douce de 3.5px au survol
+    let rect = base_rect.translate(vec2(0.0, -3.5 * hov_t));
     let round = CornerRadius::same((10.0 * scale).round() as u8);
 
     let src_col = match g.source {
@@ -896,12 +899,12 @@ pub fn game_card(
         Source::Manual => accent,
     };
 
-    // Halo lumineux d'ambiance soigné (lueur douce dégradée)
+    // Halo d'ambiance lissé (Ambient Glow)
     if hov_t > 0.02 {
-        let glow_outer = src_col.gamma_multiply(0.14 * hov_t);
-        let glow_inner = src_col.gamma_multiply(0.28 * hov_t);
+        let glow_outer = src_col.gamma_multiply(0.12 * hov_t);
+        let glow_inner = src_col.gamma_multiply(0.24 * hov_t);
         p.rect_filled(
-            rect.expand(8.0 * hov_t * scale),
+            rect.expand(7.0 * hov_t * scale),
             CornerRadius::same(14),
             glow_outer,
         );
@@ -914,12 +917,12 @@ pub fn game_card(
 
     p.rect_filled(rect, round, th.card);
 
-    let inner = rect.shrink(2.5 * scale);
+    let inner = rect.shrink(2.0 * scale);
     let clip = p.with_clip_rect(inner);
 
     if let Some(t) = tex {
-        // Micro-zoom élégant de 2% au survol
-        let zoom = 0.02 * hov_t;
+        // Micro-zoom fluide de 1.8% au survol
+        let zoom = 0.018 * hov_t;
         let uv = Rect::from_min_max(pos2(zoom, zoom), pos2(1.0 - zoom, 1.0 - zoom));
         clip.image(t.id(), inner, uv, WHITE);
     } else {
@@ -933,36 +936,46 @@ pub fn game_card(
             .collect::<String>()
             .to_uppercase();
         clip.text(
-            inner.center() - vec2(0.0, 16.0 * scale),
+            inner.center() - vec2(0.0, 18.0 * scale),
             Align2::CENTER_CENTER,
             if initials.is_empty() { "?" } else { &initials },
-            FontId::proportional(40.0 * scale),
+            FontId::proportional(38.0 * scale),
             Color32::from_white_alpha(35),
         );
     }
 
-    // Dégradé sombre progressif au bas de la carte pour garantir une lisibilité optimale
-    let fade_h = 105.0 * scale;
+    // Dégradé sombre progressif au bas de la jaquette pour une lisibilité parfaite des titres
+    let fade_h = 110.0 * scale;
     let fade_rect = Rect::from_min_max(pos2(inner.left(), inner.bottom() - fade_h), inner.right_bottom());
     draw_vertical_fade(
         &clip,
         fade_rect,
         Color32::TRANSPARENT,
-        Color32::from_black_alpha(225),
+        Color32::from_black_alpha(230),
     );
 
-    // Badge de source / plateforme
-    pill(
-        &clip,
-        inner.min + vec2(7.0 * scale, 7.0 * scale),
-        g.source.label(),
-        Color32::from_black_alpha(180),
-        src_col,
-    );
+    // Badges en haut à gauche : Statut d'exécution ("EN JEU") ou Plateforme
+    if is_running {
+        pill(
+            &clip,
+            inner.min + vec2(6.0 * scale, 6.0 * scale),
+            "🟢 EN JEU",
+            Color32::from_rgb(16, 185, 129),
+            WHITE,
+        );
+    } else {
+        pill(
+            &clip,
+            inner.min + vec2(6.0 * scale, 6.0 * scale),
+            g.source.label(),
+            Color32::from_black_alpha(185),
+            src_col,
+        );
+    }
 
-    // Étoile de favori
-    let star_center = pos2(inner.right() - 18.0 * scale, inner.top() + 18.0 * scale);
-    let star_rect = Rect::from_center_size(star_center, vec2(24.0 * scale, 24.0 * scale));
+    // Étoile de favori en haut à droite
+    let star_center = pos2(inner.right() - 17.0 * scale, inner.top() + 17.0 * scale);
+    let star_rect = Rect::from_center_size(star_center, vec2(26.0 * scale, 26.0 * scale));
     let star_hovered = resp
         .hover_pos()
         .map(|hp| star_rect.contains(hp))
@@ -970,7 +983,7 @@ pub fn game_card(
     let star_clicked = resp.clicked() && star_hovered;
 
     if fav || hov_t > 0.05 {
-        clip.circle_filled(star_center, 11.0 * scale, Color32::from_black_alpha(170));
+        clip.circle_filled(star_center, 11.5 * scale, Color32::from_black_alpha(175));
         let s_col = if fav {
             GOLD
         } else if star_hovered {
@@ -981,70 +994,127 @@ pub fn game_card(
         draw_icon(&clip, Icon::Star, star_center, s_col);
     }
 
-    // Badges d'état (exécutable manquant ou personnalisé)
+    // Badge d'installation ou avertissement si manquant
     if broken {
         pill(
             &clip,
-            pos2(inner.left() + 8.0 * scale, inner.bottom() - 72.0 * scale),
-            "EXE MANQUANT",
-            RED.gamma_multiply(0.85),
+            pos2(inner.left() + 7.0 * scale, inner.bottom() - 68.0 * scale),
+            "NON INSTALLÉ",
+            RED.gamma_multiply(0.90),
             WHITE,
         );
     } else if custom {
         pill(
             &clip,
-            pos2(inner.left() + 8.0 * scale, inner.bottom() - 72.0 * scale),
-            "EXE PERSONNALISÉ",
-            Color32::from_black_alpha(175),
+            pos2(inner.left() + 7.0 * scale, inner.bottom() - 68.0 * scale),
+            "EXE MANUEL",
+            Color32::from_black_alpha(180),
             TEXT_SECONDARY,
         );
     }
 
-    // Titre du jeu
-    let title_font_size = (13.5 * scale.max(0.85)).clamp(11.0, 18.0);
+    // Actions rapides au survol (Bouton Jouer central + Bouton Détails)
+    let mut play_clicked = false;
+    let mut details_clicked = false;
+
+    if hov_t > 0.10 {
+        let center_y = inner.center().y - 6.0 * scale;
+        let btn_play_rect = Rect::from_center_size(
+            pos2(inner.center().x - 22.0 * scale, center_y),
+            vec2(38.0 * scale, 38.0 * scale),
+        );
+        let btn_det_rect = Rect::from_center_size(
+            pos2(inner.center().x + 22.0 * scale, center_y),
+            vec2(38.0 * scale, 38.0 * scale),
+        );
+
+        let hp = resp.hover_pos();
+        let play_hov = hp.map(|p| btn_play_rect.contains(p)).unwrap_or(false);
+        let det_hov = hp.map(|p| btn_det_rect.contains(p)).unwrap_or(false);
+
+        // Bouton Jouer rapide
+        let play_bg = if play_hov { accent } else { accent.gamma_multiply(0.85) };
+        clip.circle_filled(btn_play_rect.center(), 18.0 * scale, play_bg);
+        clip.circle_stroke(btn_play_rect.center(), 18.0 * scale, Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.50)));
+        draw_icon(&clip, Icon::Play, btn_play_rect.center(), WHITE);
+
+        // Bouton Détails rapide
+        let det_bg = if det_hov { th.surface_3 } else { th.surface_2 };
+        clip.circle_filled(btn_det_rect.center(), 18.0 * scale, det_bg);
+        clip.circle_stroke(btn_det_rect.center(), 18.0 * scale, Stroke::new(1.0, th.border_hover));
+        draw_icon(&clip, Icon::Sliders, btn_det_rect.center(), if det_hov { WHITE } else { TEXT_SECONDARY });
+
+        if resp.clicked() {
+            if play_hov {
+                play_clicked = true;
+            } else if det_hov {
+                details_clicked = true;
+            }
+        }
+    }
+
+    // Zone d'informations au bas de la carte (alignée rigoureusement)
+    let title_font_size = (13.5 * scale).clamp(11.0, 16.0);
+    let title_char_limit = match grid_size {
+        crate::types::GridCardSize::Small => 16,
+        crate::types::GridCardSize::Medium => 22,
+        crate::types::GridCardSize::Large => 28,
+    };
+
     clip.text(
-        pos2(inner.left() + 8.0 * scale, inner.bottom() - 46.0 * scale),
+        pos2(inner.left() + 8.0 * scale, inner.bottom() - 44.0 * scale),
         Align2::LEFT_TOP,
-        trunc(&g.name, 22),
+        trunc(&g.name, title_char_limit),
         FontId::proportional(title_font_size),
         TEXT_PRIMARY,
     );
 
     // Temps de jeu
-    let time_pos = pos2(inner.left() + 14.0 * scale, inner.bottom() - 18.0 * scale);
-    draw_icon(&clip, Icon::Clock, time_pos, TEXT_TERTIARY);
+    let time_y = inner.bottom() - 18.0 * scale;
+    draw_icon(&clip, Icon::Clock, pos2(inner.left() + 14.0 * scale, time_y), TEXT_TERTIARY);
     clip.text(
-        pos2(inner.left() + 24.0 * scale, inner.bottom() - 25.0 * scale),
+        pos2(inner.left() + 24.0 * scale, time_y - 6.5 * scale),
         Align2::LEFT_TOP,
         format_playtime(play_mins),
-        FontId::proportional((11.0 * scale.max(0.85)).clamp(9.0, 15.0)),
+        FontId::proportional((11.0 * scale).clamp(9.5, 13.5)),
         TEXT_SECONDARY,
     );
 
-    // Bordure avec survol accentué
-    let border_col = th.card_border.lerp_to_gamma(accent, hov_t * 0.65);
+    // Bordure avec mise en valeur au survol
+    let border_col = th.card_border.lerp_to_gamma(accent, hov_t * 0.70);
     p.rect_stroke(
         rect,
         round,
-        Stroke::new(1.0, border_col),
+        Stroke::new(if hov_t > 0.1 { 1.2 } else { 1.0 }, border_col),
         StrokeKind::Inside,
     );
 
-    (resp, star_clicked)
+    (resp, star_clicked, details_clicked, play_clicked)
 }
 
 // ───────────────────────────── Ligne de Liste (Game List Row) ────────────────
+// ───────────────────────────── Ligne de Liste Moderne (Game List Row) ────────────────
+#[allow(clippy::too_many_arguments)]
 pub fn game_list_row(
     ui: &mut Ui,
     g: &Game,
     tex: Option<&TextureHandle>,
     play_mins: u32,
+    last_session: Option<u64>,
     fav: bool,
+    broken: bool,
+    is_running: bool,
     accent: Color32,
     th: ThemeColors,
 ) -> (egui::Response, bool, bool, bool) {
     let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 54.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, 56.0), Sense::click());
+
+    // Culling visuel : économise 100% du rendu pour les lignes hors écran
+    if !ui.is_rect_visible(rect) {
+        return (resp, false, false, false);
+    }
+
     let hov_t = ui
         .ctx()
         .animate_bool(Id::unique(("row_hov", &g.id)), resp.hovered());
@@ -1061,8 +1131,8 @@ pub fn game_list_row(
         StrokeKind::Inside,
     );
 
-    // Miniature jaquette
-    let thumb = Rect::from_min_size(rect.min + vec2(8.0, 6.0), vec2(32.0, 42.0));
+    // 1. Miniature jaquette
+    let thumb = Rect::from_min_size(rect.min + vec2(8.0, 7.0), vec2(32.0, 42.0));
     if let Some(t) = tex {
         p.image(
             t.id(),
@@ -1076,15 +1146,6 @@ pub fn game_list_row(
     }
     p.rect_stroke(thumb, CornerRadius::same(5), Stroke::new(1.0, th.border_subtle), StrokeKind::Inside);
 
-    // Titre & Métadonnées
-    p.text(
-        pos2(thumb.right() + 12.0, rect.top() + 10.0),
-        Align2::LEFT_TOP,
-        &g.name,
-        FontId::proportional(13.5),
-        TEXT_PRIMARY,
-    );
-
     let src_col = match g.source {
         Source::Steam => STEAM_C,
         Source::Epic => EPIC_C,
@@ -1096,24 +1157,61 @@ pub fn game_list_row(
         Source::Manual => accent,
     };
 
-    let src_label = g.source.label();
-    let src_gal = p.layout_no_wrap(src_label.to_string(), FontId::proportional(11.0), src_col);
-    let src_w = src_gal.size().x;
-    p.galley(pos2(thumb.right() + 12.0, rect.top() + 30.0), src_gal, src_col);
-
-    let time_str = format!("  •  {}", format_playtime(play_mins));
+    // 2. Colonne Titre & Plateforme
+    let name_x = thumb.right() + 14.0;
     p.text(
-        pos2(thumb.right() + 12.0 + src_w, rect.top() + 29.0),
+        pos2(name_x, rect.top() + 10.0),
         Align2::LEFT_TOP,
-        time_str,
-        FontId::proportional(11.5),
-        TEXT_SECONDARY,
+        trunc(&g.name, 32),
+        FontId::proportional(13.5),
+        TEXT_PRIMARY,
     );
 
-    // Zones interactives à droite
-    let play_rect = Rect::from_center_size(pos2(rect.right() - 44.0, rect.center().y), vec2(62.0, 28.0));
-    let opt_rect = Rect::from_center_size(pos2(rect.right() - 94.0, rect.center().y), vec2(28.0, 28.0));
-    let fav_rect = Rect::from_center_size(pos2(rect.right() - 128.0, rect.center().y), vec2(28.0, 28.0));
+    let src_label = g.source.label();
+    let src_gal = p.layout_no_wrap(src_label.to_string(), FontId::proportional(10.5), src_col);
+    p.galley(pos2(name_x, rect.top() + 31.0), src_gal, src_col);
+
+    // 3. Colonne Temps de jeu & Dernière session
+    let col_time_x = (rect.left() + width * 0.44).max(name_x + 180.0);
+    let time_str = format_playtime(play_mins);
+    p.text(
+        pos2(col_time_x, rect.top() + 11.0),
+        Align2::LEFT_TOP,
+        time_str,
+        FontId::proportional(12.5),
+        TEXT_PRIMARY,
+    );
+
+    let last_str = crate::types::format_last_played_time(last_session);
+    p.text(
+        pos2(col_time_x, rect.top() + 30.0),
+        Align2::LEFT_TOP,
+        last_str,
+        FontId::proportional(11.0),
+        TEXT_TERTIARY,
+    );
+
+    // 4. Colonne Statut
+    let col_status_x = (rect.left() + width * 0.68).max(col_time_x + 120.0);
+    let (status_text, status_col) = if is_running {
+        ("🟢 En jeu", Color32::from_rgb(16, 185, 129))
+    } else if broken {
+        ("⚠️ Non installé", RED)
+    } else {
+        ("🟢 Prêt", TEXT_SECONDARY)
+    };
+    p.text(
+        pos2(col_status_x, rect.center().y),
+        Align2::LEFT_CENTER,
+        status_text,
+        FontId::proportional(12.0),
+        status_col,
+    );
+
+    // 5. Actions interactives à droite
+    let play_rect = Rect::from_center_size(pos2(rect.right() - 44.0, rect.center().y), vec2(64.0, 30.0));
+    let opt_rect = Rect::from_center_size(pos2(rect.right() - 98.0, rect.center().y), vec2(30.0, 30.0));
+    let fav_rect = Rect::from_center_size(pos2(rect.right() - 136.0, rect.center().y), vec2(30.0, 30.0));
 
     let hp = resp.hover_pos();
     let play_hov = hp.map(|pos| play_rect.contains(pos)).unwrap_or(false);
@@ -1134,7 +1232,7 @@ pub fn game_list_row(
         },
     );
 
-    // Bouton de configuration / options
+    // Bouton Détails / Configuration
     draw_icon(
         p,
         Icon::Sliders,
@@ -1155,8 +1253,8 @@ pub fn game_list_row(
     p.text(
         play_rect.center(),
         Align2::CENTER_CENTER,
-        "Jouer",
-        FontId::proportional(11.5),
+        "▶ Jouer",
+        FontId::proportional(12.0),
         Color32::WHITE,
     );
 

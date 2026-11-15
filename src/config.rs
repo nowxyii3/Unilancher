@@ -109,6 +109,21 @@ pub struct Settings {
     /// Mode haute performance au lancement d'un jeu (optimisation plan d'alimentation)
     #[serde(default)]
     pub performance_mode: bool,
+    /// Mode d'affichage mémorisé (Grille ou Liste)
+    #[serde(default)]
+    pub view_mode: crate::types::ViewMode,
+    /// Taille prédéfinie des cartes en grille (Petite, Moyenne, Grande)
+    #[serde(default)]
+    pub grid_card_size: crate::types::GridCardSize,
+    /// Filtre de statut avancé mémorisé
+    #[serde(default)]
+    pub status_filter: crate::types::LibraryStatusFilter,
+    /// Mode de tri mémorisé
+    #[serde(default)]
+    pub sort_mode: crate::types::SortMode,
+    /// Bannière personnalisée choisie à la main (clé = id du jeu)
+    #[serde(default)]
+    pub banner_overrides: HashMap<String, PathBuf>,
     /// Liste des jeux ajoutés manuellement
     pub manual_games: Vec<Game>,
     /// Exécutable choisi à la main pour un jeu (clé = id du jeu)
@@ -206,6 +221,11 @@ impl Default for Settings {
             theme: 0,
             auto_download_covers: true,
             performance_mode: false,
+            view_mode: crate::types::ViewMode::Grid,
+            grid_card_size: crate::types::GridCardSize::Medium,
+            status_filter: crate::types::LibraryStatusFilter::All,
+            sort_mode: crate::types::SortMode::Playtime,
+            banner_overrides: HashMap::new(),
             manual_games: Vec::new(),
             exe_overrides: HashMap::new(),
             cover_overrides: HashMap::new(),

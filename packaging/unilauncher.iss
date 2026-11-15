@@ -4,7 +4,7 @@
 ; =====================================================================
 
 #define MyAppName "UniLauncher"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "nowxyii3"
 #define MyAppURL "https://github.com/nowxyii3/Unilancher"
 #define MyAppExeName "UniLauncher.exe"

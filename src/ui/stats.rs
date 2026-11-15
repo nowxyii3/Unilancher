@@ -8,7 +8,7 @@ use crate::theme::{
 use crate::types::format_playtime;
 use crate::ui::components::trunc;
 use eframe::egui::{
-    self, pos2, vec2, Align, Color32, CornerRadius, Layout, Margin, Rect, RichText, Sense, Stroke,
+    self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Rect, RichText, Sense, Stroke,
     Ui,
 };
 use std::collections::HashSet;
@@ -163,33 +163,38 @@ impl Launcher {
                                 0.0
                             };
 
+                            let avail_w = ui.available_width();
+                            let pct_w = 48.0;
+                            let info_w = (avail_w - pct_w - 12.0).max(100.0);
+
                             ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
                                 let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
                                 ui.painter().circle_filled(r.center(), 3.5, col);
-                                ui.label(
-                                    RichText::new(src.label())
-                                        .size(12.5)
-                                        .strong()
-                                        .color(TEXT_PRIMARY),
+
+                                let (info_r, _) = ui.allocate_exact_size(vec2(info_w, 20.0), Sense::hover());
+                                let summary_text = format!(
+                                    "{}  •  {count} jeux  •  {:.1} h  •  {}",
+                                    src.label(),
+                                    p_mins as f32 / 60.0,
+                                    scan::format_size(p_bytes)
                                 );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "•  {count} jeux  •  {:.1} h  •  {}",
-                                        p_mins as f32 / 60.0,
-                                        scan::format_size(p_bytes)
-                                    ))
-                                    .size(11.5)
-                                    .color(TEXT_SECONDARY),
+                                ui.painter().text(
+                                    pos2(info_r.left(), info_r.center().y),
+                                    Align2::LEFT_CENTER,
+                                    trunc(&summary_text, (info_w / 7.0).max(15.0) as usize),
+                                    FontId::proportional(12.0),
+                                    TEXT_PRIMARY,
                                 );
 
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    ui.label(
-                                        RichText::new(format!("{:.0}%", pct * 100.0))
-                                            .size(12.0)
-                                            .strong()
-                                            .color(TEXT_PRIMARY),
-                                    );
-                                });
+                                let (pct_r, _) = ui.allocate_exact_size(vec2(pct_w, 20.0), Sense::hover());
+                                ui.painter().text(
+                                    pos2(pct_r.right(), pct_r.center().y),
+                                    Align2::RIGHT_CENTER,
+                                    format!("{:.0}%", pct * 100.0),
+                                    FontId::proportional(12.0),
+                                    TEXT_PRIMARY,
+                                );
                             });
                             ui.add_space(3.0);
                             let (bar_r, _) =
@@ -237,32 +242,47 @@ impl Launcher {
                             for (idx, g) in sorted_play.iter().take(5).enumerate() {
                                 let mins = self.total_playtime_mins(g);
                                 let ratio = mins as f32 / max_play as f32;
+                                let rank_col = match idx {
+                                    0 => GOLD,
+                                    1 => Color32::from_rgb(226, 232, 240),
+                                    2 => Color32::from_rgb(245, 158, 11),
+                                    _ => TEXT_TERTIARY,
+                                };
+
+                                let avail_w = ui.available_width();
+                                let rank_w = 28.0;
+                                let val_w = 95.0;
+                                let name_w = (avail_w - rank_w - val_w - 14.0).max(60.0);
+                                let char_limit = (name_w / 7.2).max(10.0) as usize;
+
                                 ui.horizontal(|ui| {
-                                    let rank_col = match idx {
-                                        0 => GOLD,
-                                        1 => Color32::from_rgb(226, 232, 240),
-                                        2 => Color32::from_rgb(245, 158, 11),
-                                        _ => TEXT_TERTIARY,
-                                    };
-                                    ui.label(
-                                        RichText::new(format!("#{}", idx + 1))
-                                            .size(12.0)
-                                            .strong()
-                                            .color(rank_col),
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    let (rank_r, _) = ui.allocate_exact_size(vec2(rank_w, 20.0), Sense::hover());
+                                    ui.painter().text(
+                                        pos2(rank_r.left(), rank_r.center().y),
+                                        Align2::LEFT_CENTER,
+                                        format!("#{}", idx + 1),
+                                        FontId::proportional(12.0),
+                                        rank_col,
                                     );
-                                    ui.label(
-                                        RichText::new(trunc(&g.name, 22))
-                                            .size(12.5)
-                                            .color(TEXT_PRIMARY),
+                                    let (name_r, name_resp) = ui.allocate_exact_size(vec2(name_w, 20.0), Sense::hover());
+                                    ui.painter().text(
+                                        pos2(name_r.left(), name_r.center().y),
+                                        Align2::LEFT_CENTER,
+                                        trunc(&g.name, char_limit),
+                                        FontId::proportional(12.5),
+                                        TEXT_PRIMARY,
                                     );
-                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        ui.label(
-                                            RichText::new(format_playtime(mins))
-                                                .size(11.5)
-                                                .strong()
-                                                .color(TEXT_SECONDARY),
-                                        );
-                                    });
+                                    name_resp.on_hover_text(&g.name);
+
+                                    let (val_r, _) = ui.allocate_exact_size(vec2(val_w, 20.0), Sense::hover());
+                                    ui.painter().text(
+                                        pos2(val_r.right(), val_r.center().y),
+                                        Align2::RIGHT_CENTER,
+                                        format_playtime(mins),
+                                        FontId::proportional(11.5),
+                                        TEXT_SECONDARY,
+                                    );
                                 });
                                 let (bar_r, _) =
                                     ui.allocate_exact_size(vec2(ui.available_width(), 3.5), Sense::hover());
@@ -303,25 +323,40 @@ impl Launcher {
 
                             for (idx, g) in sorted_size.iter().take(5).enumerate() {
                                 let ratio = g.size_bytes as f32 / max_size as f32;
+                                let avail_w = ui.available_width();
+                                let rank_w = 28.0;
+                                let val_w = 95.0;
+                                let name_w = (avail_w - rank_w - val_w - 14.0).max(60.0);
+                                let char_limit = (name_w / 7.2).max(10.0) as usize;
+
                                 ui.horizontal(|ui| {
-                                    ui.label(
-                                        RichText::new(format!("#{}", idx + 1))
-                                            .size(12.0)
-                                            .color(TEXT_TERTIARY),
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    let (rank_r, _) = ui.allocate_exact_size(vec2(rank_w, 20.0), Sense::hover());
+                                    ui.painter().text(
+                                        pos2(rank_r.left(), rank_r.center().y),
+                                        Align2::LEFT_CENTER,
+                                        format!("#{}", idx + 1),
+                                        FontId::proportional(12.0),
+                                        TEXT_TERTIARY,
                                     );
-                                    ui.label(
-                                        RichText::new(trunc(&g.name, 22))
-                                            .size(12.5)
-                                            .color(TEXT_PRIMARY),
+                                    let (name_r, name_resp) = ui.allocate_exact_size(vec2(name_w, 20.0), Sense::hover());
+                                    ui.painter().text(
+                                        pos2(name_r.left(), name_r.center().y),
+                                        Align2::LEFT_CENTER,
+                                        trunc(&g.name, char_limit),
+                                        FontId::proportional(12.5),
+                                        TEXT_PRIMARY,
                                     );
-                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        ui.label(
-                                            RichText::new(scan::format_size(g.size_bytes))
-                                                .size(11.5)
-                                                .strong()
-                                                .color(GOLD),
-                                        );
-                                    });
+                                    name_resp.on_hover_text(&g.name);
+
+                                    let (val_r, _) = ui.allocate_exact_size(vec2(val_w, 20.0), Sense::hover());
+                                    ui.painter().text(
+                                        pos2(val_r.right(), val_r.center().y),
+                                        Align2::RIGHT_CENTER,
+                                        scan::format_size(g.size_bytes),
+                                        FontId::proportional(11.5),
+                                        GOLD,
+                                    );
                                 });
                                 let (bar_r, _) =
                                     ui.allocate_exact_size(vec2(ui.available_width(), 3.5), Sense::hover());

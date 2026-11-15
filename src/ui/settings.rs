@@ -1284,6 +1284,7 @@ mod tests {
             let (scan_tx, scan_rx) = mpsc::channel();
             let (ach_tx, ach_rx) = mpsc::channel();
             let (details_tx, details_rx) = mpsc::channel();
+            let (banner_tx, banner_rx) = mpsc::channel();
             let perf_monitor = crate::performance::PerformanceMonitor::new();
             let settings = Settings::default();
             Self {
@@ -1302,6 +1303,10 @@ mod tests {
                 big_picture_index: 0,
                 covers: HashMap::new(),
                 loading_covers: HashSet::new(),
+                banners: HashMap::new(),
+                loading_banners: HashSet::new(),
+                banner_tx,
+                banner_rx,
                 tex_tx,
                 tex_rx,
                 playtime_rx,
@@ -1463,6 +1468,78 @@ mod tests {
             });
             output.textures_delta.clear();
         }
+    }
+
+    #[test]
+    fn test_library_filtering_and_sorting() {
+        let mut launcher = Launcher::test_instance();
+        launcher.tab = Tab::All;
+        launcher.games = vec![
+            crate::config::Game {
+                id: "g1".to_string(),
+                name: "Zelda".to_string(),
+                source: crate::config::Source::Manual,
+                install_dir: None,
+                exe: None,
+                launch_uri: None,
+                cover_path: None,
+                playtime_mins: 10,
+                size_bytes: 1000,
+            },
+            crate::config::Game {
+                id: "g2".to_string(),
+                name: "Apex".to_string(),
+                source: crate::config::Source::Steam,
+                install_dir: None,
+                exe: None,
+                launch_uri: None,
+                cover_path: None,
+                playtime_mins: 0,
+                size_bytes: 5000,
+            },
+            crate::config::Game {
+                id: "g3".to_string(),
+                name: "Minecraft".to_string(),
+                source: crate::config::Source::Manual,
+                install_dir: None,
+                exe: None,
+                launch_uri: None,
+                cover_path: None,
+                playtime_mins: 500,
+                size_bytes: 200,
+            },
+        ];
+
+        launcher.settings.favorites.insert("g2".to_string());
+
+        // Test favorites filter
+        launcher.settings.status_filter = crate::types::LibraryStatusFilter::Favorites;
+        let indices = launcher.filtered_indices();
+        assert_eq!(indices.len(), 1);
+        assert_eq!(indices[0], 1); // "Apex"
+
+        // Test never played filter
+        launcher.settings.status_filter = crate::types::LibraryStatusFilter::NeverPlayed;
+        let indices = launcher.filtered_indices();
+        assert_eq!(indices.len(), 1);
+        assert_eq!(indices[0], 1); // "Apex" has 0 mins
+
+        // Test all + sort by size
+        launcher.settings.status_filter = crate::types::LibraryStatusFilter::All;
+        launcher.sort = SortMode::SizeOnDisk;
+        let indices = launcher.filtered_indices();
+        assert_eq!(indices.len(), 3);
+        assert_eq!(indices[0], 1); // Apex: 5000
+        assert_eq!(indices[1], 0); // Zelda: 1000
+        assert_eq!(indices[2], 2); // Minecraft: 200
+
+        // Test sort NameDesc (Z-A)
+        launcher.sort = SortMode::NameDesc;
+        let indices = launcher.filtered_indices();
+        assert_eq!(indices.len(), 3);
+        assert_eq!(indices[0], 0); // Zelda
+        assert_eq!(indices[1], 2); // Minecraft
+        assert_eq!(indices[2], 1); // Apex
     }
 }
 

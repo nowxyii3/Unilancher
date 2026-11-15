@@ -14,6 +14,7 @@ use eframe::egui::{
 };
 use std::{
     collections::{HashMap, HashSet},
+    io::Read,
     path::PathBuf,
     sync::mpsc,
     thread,
@@ -44,6 +45,12 @@ pub struct Launcher {
     pub(crate) loading_covers: HashSet<String>,
     pub(crate) tex_tx: mpsc::Sender<(String, ColorImage)>,
     pub(crate) tex_rx: mpsc::Receiver<(String, ColorImage)>,
+
+    // Chargement asynchrone des bannières hero HD
+    pub(crate) banners: HashMap<String, Option<TextureHandle>>,
+    pub(crate) loading_banners: HashSet<String>,
+    pub(crate) banner_tx: mpsc::Sender<(String, ColorImage)>,
+    pub(crate) banner_rx: mpsc::Receiver<(String, ColorImage)>,
 
     // Suivi de session et Discord RPC
     pub(crate) playtime_rx: mpsc::Receiver<(String, u32)>,
@@ -130,6 +137,7 @@ impl Launcher {
         let (scan_tx, scan_rx) = mpsc::channel();
         let (ach_tx, ach_rx) = mpsc::channel();
         let (details_tx, details_rx) = mpsc::channel();
+        let (banner_tx, banner_rx) = mpsc::channel();
         let perf_monitor = crate::performance::PerformanceMonitor::new();
         let initial_deals = crate::deals::DealsTracker::load_cached_or_default();
         let initial_sync = crate::deals::DealsTracker::load_cache_from_disk().map(|(ts, _)| ts);
@@ -143,6 +151,8 @@ impl Launcher {
 
         let is_fullscreen = settings.start_fullscreen;
         let mut l = Self {
+            sort: settings.sort_mode,
+            view_mode: settings.view_mode,
             settings,
             games: vec![],
             tab: if std::env::args().any(|a| a == "deals" || a == "--tab=deals" || a == "--deals") {
@@ -150,8 +160,6 @@ impl Launcher {
             } else {
                 Tab::All
             },
-            sort: SortMode::Playtime,
-            view_mode: ViewMode::Grid,
             search: String::new(),
             focus_search: false,
             is_fullscreen,
@@ -164,6 +172,10 @@ impl Launcher {
             loading_covers: HashSet::new(),
             tex_tx,
             tex_rx,
+            banners: HashMap::new(),
+            loading_banners: HashSet::new(),
+            banner_tx,
+            banner_rx,
             playtime_rx,
             playtime_tx,
             rpc_tx,
@@ -439,6 +451,104 @@ impl Launcher {
         None
     }
 
+    pub fn get_banner_texture(&mut self, ctx: &egui::Context, g: &Game) -> Option<TextureHandle> {
+        if let Some(cached) = self.banners.get(&g.id) {
+            return cached.clone();
+        }
+        if self.loading_banners.contains(&g.id) {
+            return None;
+        }
+
+        let custom_banner = self.settings.banner_overrides.get(&g.id).cloned();
+        if let Some(p) = custom_banner {
+            self.loading_banners.insert(g.id.clone());
+            let tx = self.banner_tx.clone();
+            let id = g.id.clone();
+            let ctx_clone = ctx.clone();
+            thread::spawn(move || {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(img) = image::load_from_memory(&bytes) {
+                        let resized = img.thumbnail(1280, 500);
+                        let rgba = resized.to_rgba8();
+                        let dims = [rgba.width() as usize, rgba.height() as usize];
+                        let color_image = ColorImage::from_rgba_unmultiplied(
+                            dims,
+                            rgba.as_flat_samples().as_slice(),
+                        );
+                        let _ = tx.send((id, color_image));
+                        ctx_clone.request_repaint();
+                    }
+                }
+            });
+            return None;
+        }
+
+        if let Some(appid) = g.id.strip_prefix("steam:") {
+            self.loading_banners.insert(g.id.clone());
+            let tx = self.banner_tx.clone();
+            let id = g.id.clone();
+            let appid_s = appid.to_string();
+            let ctx_clone = ctx.clone();
+            let steam_path = crate::scan::steam_root(&self.settings);
+
+            thread::spawn(move || {
+                let mut banner_bytes: Option<Vec<u8>> = None;
+                if let Some(ref s_root) = steam_path {
+                    let candidates = [
+                        s_root.join("appcache").join("librarycache").join(format!("{appid_s}_library_hero.jpg")),
+                        s_root.join("appcache").join("librarycache").join(format!("{appid_s}_header.jpg")),
+                        s_root.join("appcache").join("librarycache").join(&appid_s).join("library_hero.jpg"),
+                        s_root.join("appcache").join("librarycache").join(&appid_s).join("header.jpg"),
+                    ];
+                    for c in candidates {
+                        if c.exists() {
+                            if let Ok(b) = std::fs::read(&c) {
+                                banner_bytes = Some(b);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if banner_bytes.is_none() {
+                    let cache_dir = Settings::dir().join("banners_cache");
+                    let _ = std::fs::create_dir_all(&cache_dir);
+                    let cached_file = cache_dir.join(format!("{appid_s}_hero.jpg"));
+                    if cached_file.exists() {
+                        banner_bytes = std::fs::read(&cached_file).ok();
+                    } else {
+                        let cdn_url = format!("https://cdn.akamai.steamstatic.com/steam/apps/{appid_s}/library_hero.jpg");
+                        if let Ok(resp) = ureq::get(&cdn_url).timeout(Duration::from_secs(4)).call() {
+                            let mut buf = Vec::new();
+                            if resp.into_reader().read_to_end(&mut buf).is_ok() && buf.len() > 1000 {
+                                let _ = std::fs::write(&cached_file, &buf);
+                                banner_bytes = Some(buf);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(bytes) = banner_bytes {
+                    if let Ok(img) = image::load_from_memory(&bytes) {
+                        let resized = img.thumbnail(1280, 500);
+                        let rgba = resized.to_rgba8();
+                        let dims = [rgba.width() as usize, rgba.height() as usize];
+                        let color_image = ColorImage::from_rgba_unmultiplied(
+                            dims,
+                            rgba.as_flat_samples().as_slice(),
+                        );
+                        let _ = tx.send((id, color_image));
+                        ctx_clone.request_repaint();
+                    }
+                }
+            });
+            return None;
+        }
+
+        self.banners.insert(g.id.clone(), None);
+        None
+    }
+
     pub fn toast(&mut self, msg: impl Into<String>) {
         self.status = Some((msg.into(), Instant::now()));
     }
@@ -475,11 +585,30 @@ impl Launcher {
                     Tab::Emulators => g.id.starts_with("rom:"),
                     Tab::Deals | Tab::Hidden | Tab::Settings | Tab::Stats => false,
                 };
-                let in_quick_filter = match self.settings.quick_filter_mode {
-                    1 => favs.contains(&g.id),
-                    2 => self.total_playtime_mins(g) > 0,
-                    3 => self.total_playtime_mins(g) == 0,
-                    _ => true,
+                let in_status_filter = match self.settings.status_filter {
+                    crate::types::LibraryStatusFilter::All => match self.settings.quick_filter_mode {
+                        1 => favs.contains(&g.id),
+                        2 => {
+                            self.total_playtime_mins(g) > 0
+                                || self.settings.last_played_dates.contains_key(&g.id)
+                        }
+                        3 => {
+                            self.total_playtime_mins(g) == 0
+                                && !self.settings.last_played_dates.contains_key(&g.id)
+                        }
+                        _ => true,
+                    },
+                    crate::types::LibraryStatusFilter::Favorites => favs.contains(&g.id),
+                    crate::types::LibraryStatusFilter::Recent => {
+                        self.total_playtime_mins(g) > 0
+                            || self.settings.last_played_dates.contains_key(&g.id)
+                    }
+                    crate::types::LibraryStatusFilter::NeverPlayed => {
+                        self.total_playtime_mins(g) == 0
+                            && !self.settings.last_played_dates.contains_key(&g.id)
+                    }
+                    crate::types::LibraryStatusFilter::Installed => !g.is_broken(),
+                    crate::types::LibraryStatusFilter::NotInstalled => g.is_broken(),
                 };
                 let matches_query = if q.is_empty() {
                     true
@@ -499,7 +628,7 @@ impl Launcher {
                         .unwrap_or(false);
                     name_match || tag_match || note_match
                 };
-                in_tab && in_quick_filter && matches_query
+                in_tab && in_status_filter && matches_query
             })
             .map(|(i, _)| i)
             .collect();
@@ -519,6 +648,35 @@ impl Launcher {
             }
             SortMode::Name => {
                 filtered.sort_by_key(|&i| self.games[i].name.to_lowercase());
+            }
+            SortMode::NameDesc => {
+                filtered.sort_by(|&a, &b| {
+                    self.games[b]
+                        .name
+                        .to_lowercase()
+                        .cmp(&self.games[a].name.to_lowercase())
+                });
+            }
+            SortMode::LastPlayed => {
+                filtered.sort_by(|&a, &b| {
+                    let ta = self
+                        .settings
+                        .last_played_dates
+                        .get(&self.games[a].id)
+                        .copied()
+                        .unwrap_or(0);
+                    let tb = self
+                        .settings
+                        .last_played_dates
+                        .get(&self.games[b].id)
+                        .copied()
+                        .unwrap_or(0);
+                    tb.cmp(&ta).then_with(|| {
+                        let pa = self.total_playtime_mins(&self.games[a]);
+                        let pb = self.total_playtime_mins(&self.games[b]);
+                        pb.cmp(&pa)
+                    })
+                });
             }
             SortMode::Favorites => {
                 filtered.sort_by(|&a, &b| {
@@ -609,6 +767,29 @@ impl Launcher {
             }
             Action::OpenDetails(id) => {
                 self.selected_game_id = Some(id);
+            }
+            Action::CloseDetails => {
+                self.selected_game_id = None;
+            }
+            Action::PickBanner(id) => {
+                if let Some(p) = rfd::FileDialog::new()
+                    .set_title("Choisir une bannière HD (PNG/JPG/WEBP)")
+                    .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                    .pick_file()
+                {
+                    self.settings.banner_overrides.insert(id.clone(), p);
+                    self.banners.remove(&id);
+                    self.loading_banners.remove(&id);
+                    self.settings.save();
+                    self.toast("Bannière personnalisée appliquée");
+                }
+            }
+            Action::ClearBanner(id) => {
+                self.settings.banner_overrides.remove(&id);
+                self.banners.remove(&id);
+                self.loading_banners.remove(&id);
+                self.settings.save();
+                self.toast("Bannière réinitialisée");
             }
             Action::PickExe(id) => {
                 if let Some(p) = rfd::FileDialog::new()
@@ -994,6 +1175,13 @@ impl eframe::App for Launcher {
             let tex = ctx.load_texture(format!("cover_{id}"), color_img, TextureOptions::LINEAR);
             self.covers.insert(id.clone(), Some(tex));
             self.loading_covers.remove(&id);
+        }
+
+        // 1-banner. Intégration des bannières hero HD chargées en arrière-plan
+        while let Ok((id, color_img)) = self.banner_rx.try_recv() {
+            let tex = ctx.load_texture(format!("banner_{id}"), color_img, TextureOptions::LINEAR);
+            self.banners.insert(id.clone(), Some(tex));
+            self.loading_banners.remove(&id);
         }
 
         // 1-deals. Intégration des jaquettes et bannières de bons plans
@@ -1531,7 +1719,9 @@ impl eframe::App for Launcher {
                     .inner_margin(Margin::symmetric(28, 22)),
             )
             .show(ui, |ui| {
-                if self.tab == Tab::Settings {
+                if let Some(ref gid) = self.selected_game_id.clone() {
+                    actions.extend(self.game_details_page_ui(ui, gid));
+                } else if self.tab == Tab::Settings {
                     self.settings_ui(ui);
                 } else if self.tab == Tab::Stats {
                     self.stats_ui(ui);
@@ -1543,11 +1733,6 @@ impl eframe::App for Launcher {
                     actions.extend(self.library_ui(ui));
                 }
             });
-
-        // ── Modale de Propriétés Réactive (Style Riot / Steam) ──
-        if self.selected_game_id.is_some() {
-            actions.extend(self.properties_modal_ui(&ctx));
-        }
 
         // ── Fiche Détaillée d'un Bon Plan (Modale Plein Écran) ──
         if self.selected_deal_modal.is_some() {
