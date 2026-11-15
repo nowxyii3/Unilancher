@@ -1,3 +1,8 @@
 /target
 /dist
+/beta_artifacts
+/release_artifacts
+UniLauncher-*-Windows
+UniLauncher-*-Windows.zip
 UniLauncher-Website/
+*.pdb

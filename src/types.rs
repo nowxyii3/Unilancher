@@ -20,20 +20,15 @@ pub enum Tab {
     Settings,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default)]
 pub enum SortMode {
+    #[default]
     Playtime,
     Name,
     NameDesc,
     LastPlayed,
     Favorites,
     SizeOnDisk,
-}
-
-impl Default for SortMode {
-    fn default() -> Self {
-        SortMode::Playtime
-    }
 }
 
 impl SortMode {
@@ -49,29 +44,19 @@ impl SortMode {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default)]
 pub enum ViewMode {
+    #[default]
     Grid,
     List,
 }
 
-impl Default for ViewMode {
-    fn default() -> Self {
-        ViewMode::Grid
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default)]
 pub enum GridCardSize {
     Small,
+    #[default]
     Medium,
     Large,
-}
-
-impl Default for GridCardSize {
-    fn default() -> Self {
-        GridCardSize::Medium
-    }
 }
 
 impl GridCardSize {
@@ -92,20 +77,15 @@ impl GridCardSize {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default)]
 pub enum LibraryStatusFilter {
+    #[default]
     All,
     Favorites,
     Recent,
     NeverPlayed,
     Installed,
     NotInstalled,
-}
-
-impl Default for LibraryStatusFilter {
-    fn default() -> Self {
-        LibraryStatusFilter::All
-    }
 }
 
 impl LibraryStatusFilter {

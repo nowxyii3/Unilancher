@@ -48,11 +48,51 @@ pub enum InstallMessage {
 // Fonctions Système Windows (Registre & Raccourcis)
 // ─────────────────────────────────────────────────────────────────────────────
 
+pub fn is_beta() -> bool {
+    APP_VERSION.contains("beta")
+}
+
+pub fn app_name() -> &'static str {
+    if is_beta() {
+        "UniLauncher (BETA)"
+    } else {
+        "UniLauncher"
+    }
+}
+
+pub fn app_folder() -> &'static str {
+    if is_beta() {
+        "UniLauncher-Beta"
+    } else {
+        "UniLauncher"
+    }
+}
+
+pub fn setup_exe_name() -> &'static str {
+    if is_beta() {
+        "UniLauncher-Beta-Setup.exe"
+    } else {
+        "UniLauncherSetup.exe"
+    }
+}
+
+pub fn app_exe_name() -> &'static str {
+    if is_beta() {
+        "UniLauncher-Beta.exe"
+    } else {
+        "UniLauncher.exe"
+    }
+}
+
+pub fn registry_key_path() -> String {
+    format!(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{}", app_folder())
+}
+
 pub fn default_install_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
         .join("Programs")
-        .join(APP_NAME)
+        .join(app_folder())
 }
 
 pub fn get_start_menu_shortcut_path() -> Option<PathBuf> {
@@ -61,12 +101,12 @@ pub fn get_start_menu_shortcut_path() -> Option<PathBuf> {
             .join("Windows")
             .join("Start Menu")
             .join("Programs")
-            .join(format!("{}.lnk", APP_NAME))
+            .join(format!("{}.lnk", app_name()))
     })
 }
 
 pub fn get_desktop_shortcut_path() -> Option<PathBuf> {
-    dirs::desktop_dir().map(|d| d.join(format!("{}.lnk", APP_NAME)))
+    dirs::desktop_dir().map(|d| d.join(format!("{}.lnk", app_name())))
 }
 
 /// Enregistre l'application dans Windows (Ajout/Suppression de programmes) sans élévation
@@ -75,17 +115,18 @@ pub fn register_in_windows_registry(install_dir: &Path, exe_path: &Path) -> Resu
     use winreg::RegKey;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key_path = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\UniLauncher";
+    let key_path = registry_key_path();
     let (key, _) = hkcu
-        .create_subkey(key_path)
+        .create_subkey(&key_path)
         .map_err(|e| format!("Impossible d'accéder au registre Windows : {e}"))?;
 
-    let setup_path = install_dir.join("UniLauncherSetup.exe");
+    let setup_path = install_dir.join(setup_exe_name());
     let uninst_cmd = format!("\"{}\" --uninstall", setup_path.to_string_lossy());
     let quiet_cmd = format!("\"{}\" --uninstall --silent", setup_path.to_string_lossy());
     let icon_val = format!("\"{}\",0", exe_path.to_string_lossy());
 
-    key.set_value("DisplayName", &APP_NAME).ok();
+    let display_name = app_name();
+    key.set_value("DisplayName", &display_name).ok();
     key.set_value("DisplayVersion", &APP_VERSION).ok();
     key.set_value("Publisher", &PUBLISHER).ok();
     key.set_value("InstallLocation", &install_dir.to_string_lossy().as_ref()).ok();
@@ -114,35 +155,27 @@ pub fn unregister_from_windows_registry() -> Result<(), String> {
     use winreg::RegKey;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key_path = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\UniLauncher";
-    let _ = hkcu.delete_subkey_all(key_path);
+    let key_path = registry_key_path();
+    let _ = hkcu.delete_subkey_all(&key_path);
     Ok(())
 }
 
-/// Crée un raccourci Windows .lnk propre
+/// Crée un raccourci Windows .lnk en Rust natif (sans aucun appel à PowerShell ni WScript.Shell)
 pub fn create_windows_shortcut(shortcut_path: &Path, target_exe: &Path, description: &str) -> Result<(), String> {
     if let Some(parent) = shortcut_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let script = format!(
-        r#"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{lnk}'); $s.TargetPath = '{target}'; $s.WorkingDirectory = '{workdir}'; $s.Description = '{desc}'; $s.IconLocation = '{target},0'; $s.Save()"#,
-        lnk = shortcut_path.to_string_lossy().replace('\'', "''"),
-        target = target_exe.to_string_lossy().replace('\'', "''"),
-        workdir = target_exe.parent().unwrap_or(target_exe).to_string_lossy().replace('\'', "''"),
-        desc = description.replace('\'', "''")
-    );
+    let workdir = target_exe.parent().unwrap_or(target_exe);
+    let mut sl = mslnk::ShellLink::new(target_exe)
+        .map_err(|e| format!("Erreur initialisation raccourci : {e}"))?;
+    sl.set_working_dir(Some(workdir.to_string_lossy().to_string()));
+    sl.set_name(Some(description.to_string()));
+    sl.set_icon_location(Some(target_exe.to_string_lossy().to_string()));
+    sl.create_lnk(shortcut_path)
+        .map_err(|e| format!("Erreur création fichier .lnk : {e}"))?;
 
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .map_err(|e| format!("Échec PowerShell : {e}"))?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
-    }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,13 +216,19 @@ fn perform_installation(
             }
         };
 
-        let target_exe = target_dir.join("UniLauncher.exe");
-        let target_setup = target_dir.join("UniLauncherSetup.exe");
+        let target_exe = target_dir.join(app_exe_name());
+        let target_setup = target_dir.join(setup_exe_name());
 
         // Copie l'exécutable
         if let Err(e) = std::fs::copy(&current_exe, &target_exe) {
-            let _ = tx.send(InstallMessage::Failure(format!("Échec de la copie de UniLauncher.exe : {e}")));
+            let _ = tx.send(InstallMessage::Failure(format!("Échec de la copie de {target_exe:?} : {e}")));
             return;
+        }
+
+        // Pour compatibilité avec les scripts ou les raccourcis standard
+        if is_beta() {
+            let compat_exe = target_dir.join("UniLauncher.exe");
+            let _ = std::fs::copy(&current_exe, &compat_exe);
         }
 
         // Copie également comme setup/uninstalleur local
@@ -198,13 +237,14 @@ fn perform_installation(
         // Crée README.txt d'accompagnement
         let readme_content = format!(
             "================================================================================\r\n\
-             UniLauncher — Lanceur Universel de Jeux Vidéo pour Windows\r\n\
+             {} — Lanceur Universel de Jeux Vidéo pour Windows\r\n\
              Version : v{}\r\n\
              Éditeur : {}\r\n\
              Dépôt officiel : {}\r\n\
              ================================================================================\r\n\r\n\
              Application installée avec succès dans : {}\r\n\
              Pour désinstaller, utilisez les Paramètres Windows ou lancez : {}\r\n",
+            app_name(),
             APP_VERSION,
             PUBLISHER,
             GITHUB_URL,
@@ -220,15 +260,17 @@ fn perform_installation(
         });
         thread::sleep(Duration::from_millis(200));
 
+        let shortcut_desc = format!("{} — Lanceur Universel de Jeux Vidéo", app_name());
+
         if create_desktop {
             if let Some(desktop) = get_desktop_shortcut_path() {
-                let _ = create_windows_shortcut(&desktop, &target_exe, "UniLauncher — Lanceur Universel");
+                let _ = create_windows_shortcut(&desktop, &target_exe, &shortcut_desc);
             }
         }
 
         if create_start_menu {
             if let Some(start_menu) = get_start_menu_shortcut_path() {
-                let _ = create_windows_shortcut(&start_menu, &target_exe, "UniLauncher — Lanceur Universel");
+                let _ = create_windows_shortcut(&start_menu, &target_exe, &shortcut_desc);
             }
         }
 
@@ -266,10 +308,18 @@ fn perform_uninstallation(delete_user_data: bool, tx: Sender<InstallMessage>) {
         });
         thread::sleep(Duration::from_millis(300));
 
-        // Ferme UniLauncher s'il tourne
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/IM", "UniLauncher.exe"])
-            .output();
+        // Arrêt des processus UniLauncher en cours via sysinfo (sans appel de commande shell taskkill)
+        let current_pid = std::process::id();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        for (pid, proc) in sys.processes() {
+            let pname = proc.name().to_string_lossy().to_lowercase();
+            if (pname.contains("unilauncher") || pname.contains("unilauncher-beta"))
+                && pid.as_u32() != current_pid
+            {
+                proc.kill();
+            }
+        }
 
         let _ = tx.send(InstallMessage::Status {
             step_name: "Suppression des raccourcis Bureau et Menu Démarrer...".to_string(),
@@ -297,12 +347,14 @@ fn perform_uninstallation(delete_user_data: bool, tx: Sender<InstallMessage>) {
             progress: 0.90,
         });
         let install_dir = default_install_dir();
+        let cur_setup = setup_exe_name();
         if install_dir.exists() {
             // Supprime les fichiers sauf l'exécutable actuel s'il est en cours d'exécution
             if let Ok(entries) = std::fs::read_dir(&install_dir) {
                 for entry in entries.flatten() {
                     let p = entry.path();
-                    if p.file_name().and_then(|n| n.to_str()) != Some("UniLauncherSetup.exe") {
+                    let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    if fname != cur_setup && fname != "UniLauncherSetup.exe" && fname != "UniLauncher-Beta-Setup.exe" {
                         let _ = std::fs::remove_file(&p);
                     }
                 }
@@ -311,7 +363,7 @@ fn perform_uninstallation(delete_user_data: bool, tx: Sender<InstallMessage>) {
 
         if delete_user_data {
             if let Some(config_dir) = dirs::config_dir() {
-                let user_data = config_dir.join(APP_NAME);
+                let user_data = config_dir.join(app_folder());
                 let _ = std::fs::remove_dir_all(user_data);
             }
         }
@@ -333,17 +385,13 @@ pub fn run_update_worker(target_dir_str: &str, parent_pid_str: &str) {
     let pid: u32 = parent_pid_str.parse().unwrap_or(0);
     let target_dir = PathBuf::from(target_dir_str);
 
-    // Attente que le processus parent quitte
+    // Attente que le processus parent quitte via sysinfo (sans appel de commande shell tasklist)
     if pid > 0 {
+        let mut sys = sysinfo::System::new();
         for _ in 0..60 {
-            let check = std::process::Command::new("tasklist")
-                .args(["/FI", &format!("PID eq {pid}")])
-                .output();
-            if let Ok(out) = check {
-                let s = String::from_utf8_lossy(&out.stdout);
-                if !s.contains(&pid.to_string()) {
-                    break;
-                }
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            if !sys.processes().iter().any(|(p, _)| p.as_u32() == pid) {
+                break;
             }
             thread::sleep(Duration::from_millis(150));
         }
@@ -494,9 +542,9 @@ impl SetupApp {
         );
 
         let title_text = if self.is_uninstaller {
-            "UniLauncher — Assistant de Désinstallation"
+            format!("{} — Assistant de Désinstallation", app_name())
         } else {
-            "UniLauncher — Assistant d'Installation Professionnel"
+            format!("{} — Assistant d'Installation Professionnel", app_name())
         };
         p.text(
             Pos2::new(rect.min.x + 36.0, c.y),
@@ -546,7 +594,7 @@ impl SetupApp {
                     ui.add_space(16.0);
 
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("Installation de UniLauncher").size(20.0).strong().color(TEXT_PRIMARY));
+                        ui.label(RichText::new(format!("Installation de {}", app_name())).size(20.0).strong().color(TEXT_PRIMARY));
                         ui.add_space(3.0);
                         ui.label(
                             RichText::new(format!("Version {} — Production Stable (Windows 10/11 x64)", APP_VERSION))
@@ -679,7 +727,7 @@ impl SetupApp {
                     p.text(chk_rect.center(), Align2::CENTER_CENTER, "✓", FontId::proportional(22.0), Color32::WHITE);
 
                     ui.add_space(16.0);
-                    ui.label(RichText::new("UniLauncher est installé avec succès !").size(20.0).strong().color(TEXT_PRIMARY));
+                    ui.label(RichText::new(format!("{} est installé avec succès !", app_name())).size(20.0).strong().color(TEXT_PRIMARY));
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(format!("L'application est prête à l'emploi dans : {}", self.install_dir))
@@ -688,7 +736,7 @@ impl SetupApp {
                     );
 
                     ui.add_space(20.0);
-                    ui.checkbox(&mut self.launch_after_install, RichText::new("Lancer UniLauncher maintenant").size(13.0).color(TEXT_PRIMARY));
+                    ui.checkbox(&mut self.launch_after_install, RichText::new(format!("Lancer {} maintenant", app_name())).size(13.0).color(TEXT_PRIMARY));
 
                     ui.add_space(28.0);
 
@@ -699,7 +747,7 @@ impl SetupApp {
 
                     if ui.add(finish_btn).clicked() {
                         if self.launch_after_install {
-                            let target_exe = PathBuf::from(&self.install_dir).join("UniLauncher.exe");
+                            let target_exe = PathBuf::from(&self.install_dir).join(app_exe_name());
                             let _ = std::process::Command::new(target_exe).spawn();
                         }
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -882,11 +930,11 @@ mod tests {
         assert!(install_dir.to_string_lossy().contains("Programs"));
 
         if let Some(desktop) = get_desktop_shortcut_path() {
-            assert!(desktop.to_string_lossy().ends_with("UniLauncher.lnk"));
+            assert!(desktop.to_string_lossy().ends_with(&format!("{}.lnk", app_name())));
         }
 
         if let Some(start_menu) = get_start_menu_shortcut_path() {
-            assert!(start_menu.to_string_lossy().ends_with("UniLauncher.lnk"));
+            assert!(start_menu.to_string_lossy().ends_with(&format!("{}.lnk", app_name())));
         }
     }
 
@@ -903,5 +951,19 @@ mod tests {
         assert!(uninst.is_uninstaller);
         assert_eq!(uninst.uninst_step, UninstallStep::Confirm);
         assert!(!uninst.delete_user_data);
+    }
+
+    #[test]
+    fn test_create_windows_shortcut_mslnk() {
+        let temp_dir = std::env::temp_dir();
+        let test_lnk = temp_dir.join("test_unilauncher_beta.lnk");
+        let fake_exe = temp_dir.join("fake_unilauncher_beta.exe");
+        let _ = std::fs::write(&fake_exe, b"MZ");
+
+        let res = create_windows_shortcut(&test_lnk, &fake_exe, "Test shortcut");
+        assert!(res.is_ok(), "Shortcut creation failed: {:?}", res.err());
+        assert!(test_lnk.exists());
+        let _ = std::fs::remove_file(test_lnk);
+        let _ = std::fs::remove_file(fake_exe);
     }
 }

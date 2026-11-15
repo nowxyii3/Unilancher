@@ -1050,8 +1050,8 @@ fn date_to_unix_timestamp(year: i32, month: u32, day: u32, hour: u32, min: u32, 
         days += if is_leap_year(y) { 366 } else { 365 };
     }
     let month_days = [31, if is_leap_year(year) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    for m in 0..(month.saturating_sub(1) as usize).min(11) {
-        days += month_days[m] as i64;
+    for &d in month_days.iter().take((month.saturating_sub(1) as usize).min(11)) {
+        days += d as i64;
     }
     days += (day.saturating_sub(1)) as i64;
     days * 86400 + (hour as i64) * 3600 + (min as i64) * 60 + (sec as i64)

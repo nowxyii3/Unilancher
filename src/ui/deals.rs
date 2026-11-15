@@ -202,6 +202,7 @@ impl Launcher {
     }
 
     // ───────────────────────────── Bannière Vedette ──────────────────────────
+    #[allow(clippy::too_many_arguments)]
     fn showcase_banner_ui(
         &mut self,
         ui: &mut Ui,
@@ -519,10 +520,8 @@ impl Launcher {
                         .desired_width(search_w - 55.0);
                     ui.add(edit);
 
-                    if !self.deals_search.is_empty() {
-                        if ui.small_button("✕").clicked() {
-                            self.deals_search.clear();
-                        }
+                    if !self.deals_search.is_empty() && ui.small_button("✕").clicked() {
+                        self.deals_search.clear();
                     }
                 });
 
@@ -598,18 +597,17 @@ impl Launcher {
                     });
 
                 // Réinitialiser les filtres si actifs
-                if !self.deals_search.is_empty() || self.deals_platform_filter.is_some() {
-                    if ui
+                if (!self.deals_search.is_empty() || self.deals_platform_filter.is_some())
+                    && ui
                         .button(
                             RichText::new("✕ Réinitialiser")
                                 .size(11.0)
                                 .color(WARNING),
                         )
                         .clicked()
-                    {
-                        self.deals_search.clear();
-                        self.deals_platform_filter = None;
-                    }
+                {
+                    self.deals_search.clear();
+                    self.deals_platform_filter = None;
                 }
             });
         });
@@ -1390,7 +1388,7 @@ impl Launcher {
                 list.reverse();
             }
             DealsSortMode::Alphabetical => {
-                list.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+                list.sort_by_key(|a| a.title.to_lowercase());
             }
         }
 

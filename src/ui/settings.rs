@@ -1120,9 +1120,20 @@ impl Launcher {
 
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     if primary_chip(ui, "🔍 Rechercher des mises à jour", accent) {
-                                        self.update_mgr.check_for_updates();
+                                        self.update_mgr.check_for_updates(self.settings.update_channel);
                                     }
                                 });
+                            });
+
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Canal :").size(12.0).color(TEXT_SECONDARY));
+                                if ui.selectable_value(&mut self.settings.update_channel, crate::config::UpdateChannel::Stable, "Stable").clicked() {
+                                    self.settings.save();
+                                }
+                                if ui.selectable_value(&mut self.settings.update_channel, crate::config::UpdateChannel::Beta, "BETA (Test)").clicked() {
+                                    self.settings.save();
+                                }
                             });
                         });
 
