@@ -2,14 +2,16 @@ name: Release UniLauncher
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag name to release (e.g. v1.0.0)'
+        description: 'Tag name to release (e.g. v1.1.0)'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.1.0'
         type: string
 
 permissions:
@@ -41,15 +43,17 @@ jobs:
       - name: Build Windows Production Binary
         shell: pwsh
         run: |
+          $env:CARGO_INCREMENTAL = "0"
           cargo build --release
 
       - name: Prepare Windows Setup & Checksums
         id: dist
         shell: pwsh
         run: |
+          $cargoVer = (Get-Content "Cargo.toml" | Select-String '^version = "(.*)"').Matches.Groups[1].Value
           $rawTag = "${{ github.ref_name }}"
-          if ([string]::IsNullOrWhiteSpace($rawTag) -or "${{ github.event_name }}" -eq "workflow_dispatch") {
-            $rawTag = "${{ github.event.inputs.tag_name }}"
+          if ([string]::IsNullOrWhiteSpace($rawTag) -or "${{ github.event_name }}" -eq "workflow_dispatch" -or $rawTag -eq "main") {
+            $rawTag = if ($cargoVer) { "v$cargoVer" } else { "${{ github.event.inputs.tag_name }}" }
           }
           if (-not $rawTag.StartsWith("v")) {
             $verTag = "v$rawTag"
@@ -97,6 +101,13 @@ jobs:
 
           "tag=$verTag" >> $env:GITHUB_OUTPUT
 
+      - name: Upload Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: UniLauncher-v1.1.0-Release-Windows
+          path: release_artifacts/*
+          retention-days: 30
+
       - name: Publish Official GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -112,6 +123,13 @@ jobs:
             2. Double-cliquez sur le fichier pour lancer l'assistant graphique d'installation.
             3. Choisissez votre dossier d'installation (recommandé : `%LOCALAPPDATA%\Programs\UniLauncher`).
             4. Cliquez sur **Installer** puis profitez immédiatement de votre bibliothèque unifiée !
+
+            ### 🛡️ Sécurité & Fiabilité Renforcées
+            - **Manifeste d'application officiel Windows** (`app.manifest`) intégré dans l'exécutable (`asInvoker`, compatibilité Windows 10/11, DPI Awareness).
+            - **Métadonnées de version PE intégrées** (`VERSIONINFO`, `CompanyName`, `LegalCopyright`, `OriginalFilename`).
+            - **Raccourcis Windows 100% natifs en Rust** : Suppression totale des commandes PowerShell, zéro processus console enfant.
+            - **Gestion d'énergie Win32 directe** : Utilisation de `PowerSetActiveScheme` dans `PowrProf.dll` sans `powercfg.exe`.
+            - **Auto-updater cryptographique** : Calcul et vérification SHA-256 obligatoire contre `checksums.txt` avant toute mise à jour.
 
             ### 📦 Fichiers inclus dans cette release
             - **`UniLauncherSetup.exe`** : Assistant d'installation graphique autonome pour Windows 10 & 11 (64-bit).
