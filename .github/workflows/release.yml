@@ -84,13 +84,13 @@ jobs:
           $hashVerSetup = (Get-FileHash -Algorithm SHA256 $setupVersionedExe).Hash
           $hashZip = (Get-FileHash -Algorithm SHA256 $zipArchive).Hash
 
-          $checksumsContent = @"
-$hashSetup  UniLauncherSetup.exe
-$hashVerSetup  UniLauncherSetup-$verTag.exe
-$hashZip  UniLauncher-$verTag-Windows.zip
-"@
+          $checksumsLines = @(
+            "$hashSetup  UniLauncherSetup.exe",
+            "$hashVerSetup  UniLauncherSetup-$verTag.exe",
+            "$hashZip  UniLauncher-$verTag-Windows.zip"
+          )
           $checksumsFile = "$distDir\checksums.txt"
-          Set-Content -Path $checksumsFile -Value $checksumsContent -Encoding utf8
+          $checksumsLines | Set-Content -Path $checksumsFile -Encoding utf8
 
           Write-Host "Generated release artifacts:"
           Get-ChildItem $distDir | Format-Table Name, Length
@@ -119,7 +119,15 @@ $hashZip  UniLauncher-$verTag-Windows.zip
             - **`UniLauncher-${{ steps.dist.outputs.tag }}-Windows.zip`** : Archive portable autonome pour utilisateurs avancés.
             - **`checksums.txt`** : Empreintes cryptographiques SHA-256 officielles pour vérification d'intégrité.
 
-            ### ✨ Fonctionnalités Clés
+            ### ✨ Nouveautés Majeures de la v1.1.0
+            - 🎨 **Refonte complète de la bibliothèque** : Nouvelles jaquettes au format gaming, cartes adaptatives (Petite S, Moyenne M, Grande L), hover overlay avec actions rapides (Jouer, Détails, Favoris) et alignement strict.
+            - 📋 **Mode liste immersif** : Vue tabulaire haute lisibilité avec statut d'installation, temps de jeu précis et date relative de dernière session.
+            - 🔍 **Filtres avancés combinables** : Segments d'état (Tous, Favoris, Récents, Jamais lancés, Installés, Non installés) et 6 multi-tris (Temps de jeu, Nom A-Z/Z-A, Dernière session, Favoris en premier, Taille sur le disque).
+            - 🌟 **Fiche de jeu intégrée pleine page** : Hero Banner haute définition / mesh procédural, 5 onglets riches (Vue d'ensemble, Statistiques, Captures d'écran, Succès & Trophées avec filtres, Paramètres personnalisés avec bannières locales).
+            - 📊 **Correction des statistiques** : Élimination définitive des chevauchements de texte dans les Top 5 les plus joués et les plus volumineux (compatible tout facteur d'échelle DPI Windows).
+            - 🚀 **Optimisation Viewport Culling** : Framerate constant même sur de très grandes bibliothèques (+1 000 jeux).
+
+            ### 🎮 Fonctionnalités Clés
             - 🎮 Centralisation multi-stores automatique (Steam, Epic, GOG, EA, Ubisoft, Battle.net, Xbox PC)
             - 📺 Mode Salon TV / Big Picture (F10) pilotable à la manette et au clavier
             - ⚡ Recherche instantanée Spotlight (Alt + Espace)
